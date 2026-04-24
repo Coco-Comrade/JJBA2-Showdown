@@ -100,7 +100,26 @@ CHARACTERS = {
         "speed": 6,
         "jump": -22,
     },
+    "kars": {
+        "name": "Kars",
+        "title": "Pillar Genius",
+        "color": (185, 40, 210),
+        "accent": (120, 245, 255),
+        "aura": (210, 80, 255),
+        "speed": 6,
+        "jump": -21,
+    },
+    "stroheim": {
+        "name": "Stroheim",
+        "title": "Cyborg Soldier",
+        "color": (105, 165, 195),
+        "accent": (245, 245, 245),
+        "aura": (160, 220, 255),
+        "speed": 5,
+        "jump": -18,
+    },
 }
+CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim")
 
 ATTACKS = {
     "light": {
@@ -191,13 +210,14 @@ def recv_json(sock, buffer):
 # LAN SERVER
 # =========================
 class LobbyServer:
-    def __init__(self):
+    def __init__(self, host_character="joseph"):
         self.host = "0.0.0.0"
         self.port = PORT
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.clients = {}
         self.inputs = {0: empty_input(), 1: empty_input()}
+        self.selections = {0: host_character, 1: None}
         self.lock = threading.Lock()
         self.running = True
         self.started = False
@@ -225,7 +245,7 @@ class LobbyServer:
                     self.clients[player_id] = conn
                     self.started = len(self.clients) == 2
 
-                send_json(conn, {"type": "welcome", "player_id": player_id})
+                send_json(conn, {"type": "welcome", "player_id": player_id, "selections": self.selections})
 
                 thread = threading.Thread(target=self.client_loop, args=(conn, player_id), daemon=True)
                 thread.start()
@@ -241,6 +261,12 @@ class LobbyServer:
                 if data.get("type") == "input":
                     with self.lock:
                         self.inputs[player_id] = data["input"]
+                elif data.get("type") == "select":
+                    character_key = data.get("character")
+                    with self.lock:
+                        taken = [value for pid, value in self.selections.items() if pid != player_id]
+                        if character_key in CHARACTERS and character_key not in taken:
+                            self.selections[player_id] = character_key
             except Exception:
                 with self.lock:
                     if player_id in self.clients:
@@ -276,6 +302,18 @@ class LobbyServer:
         with self.lock:
             return len(self.clients)
 
+    def characters_ready(self):
+        with self.lock:
+            return all(self.selections.get(pid) for pid in (0, 1))
+
+    def get_characters(self):
+        with self.lock:
+            p1 = self.selections.get(0) or "joseph"
+            p2 = self.selections.get(1) or "caesar"
+        if p1 == p2:
+            p2 = next(key for key in CHARACTER_ORDER if key != p1)
+        return p1, p2
+
     def stop(self):
         self.running = False
         try:
@@ -306,6 +344,7 @@ class GameClient:
         self.lock = threading.Lock()
         self.last_sent_input = None
         self.last_input_send_time = 0
+        self.selections = {0: None, 1: None}
 
     def connect(self, host_ip):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -321,6 +360,9 @@ class GameClient:
             raise ConnectionError("Bad server response")
 
         self.player_id = data["player_id"]
+        self.selections = {
+            int(pid): value for pid, value in data.get("selections", {}).items()
+        }
         self.running = True
         self.receiver_thread = threading.Thread(target=self.receive_loop, daemon=True)
         self.receiver_thread.start()
@@ -346,6 +388,10 @@ class GameClient:
         send_json(self.sock, {"type": "input", "input": input_data})
         self.last_sent_input = dict(input_data)
         self.last_input_send_time = now
+
+    def select_character(self, character_key):
+        send_json(self.sock, {"type": "select", "character": character_key})
+        self.selections[self.player_id] = character_key
 
     def get_state(self):
         with self.lock:
@@ -970,6 +1016,66 @@ def draw_lobby_side_panel(players=1):
     draw_small("MENU: ESC", 990, 684, WHITE, 240)
 
 
+def draw_character_card(character_key, rect, selected=False, locked=False):
+    char = CHARACTERS[character_key]
+    fill = (42, 16, 52) if selected else (18, 14, 28)
+    if locked:
+        fill = (24, 24, 30)
+    pygame.draw.rect(screen, fill, rect, border_radius=4)
+    pygame.draw.rect(screen, char["accent"] if not locked else GRAY, rect, 3 if selected else 2, border_radius=4)
+
+    body = pygame.Rect(rect.centerx - 22, rect.y + 32, 44, 72)
+    pygame.draw.circle(screen, char["aura"], (body.centerx, body.y + 20), 35, 2)
+    pygame.draw.rect(screen, char["color"] if not locked else GRAY, body, border_radius=4)
+    pygame.draw.ellipse(screen, (235, 190, 150), (body.x + 8, body.y - 22, 28, 28))
+
+    draw_text_in_rect(char["name"].upper(), pygame.Rect(rect.x + 10, rect.y + 112, rect.width - 20, 26), font, WHITE if not locked else GRAY, min_size=14)
+    draw_text_in_rect(char["title"], pygame.Rect(rect.x + 10, rect.y + 140, rect.width - 20, 24), small_font, char["accent"] if not locked else GRAY, min_size=11)
+    if locked:
+        draw_text_in_rect("TAKEN", pygame.Rect(rect.x + 10, rect.y + 8, rect.width - 20, 24), small_font, RED, min_size=12)
+
+
+def character_select_screen(title, unavailable=None):
+    unavailable = set(unavailable or [])
+    available = [key for key in CHARACTER_ORDER if key not in unavailable]
+    selected = 0
+
+    while True:
+        clock.tick(FPS)
+        handle_secret_image_toggle()
+        draw_menu_background()
+        draw_center(title, 70, True, YELLOW)
+        draw_center("Choose your fighter", 145, False, CYAN)
+
+        for index, key in enumerate(CHARACTER_ORDER):
+            row = index // 3
+            col = index % 3
+            rect = pygame.Rect(185 + col * 310, 210 + row * 215, 245, 175)
+            is_locked = key in unavailable
+            is_selected = available and key == available[selected]
+            draw_character_card(key, rect, is_selected, is_locked)
+
+        draw_center("Left/Right = change    Enter = select    Esc = back", 660, False, GRAY)
+        draw_secret_image_popup()
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                quit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                if not available:
+                    continue
+                if event.key in (pygame.K_LEFT, pygame.K_a, pygame.K_UP, pygame.K_w):
+                    selected = (selected - 1) % len(available)
+                elif event.key in (pygame.K_RIGHT, pygame.K_d, pygame.K_DOWN, pygame.K_s):
+                    selected = (selected + 1) % len(available)
+                elif event.key == pygame.K_RETURN:
+                    return available[selected]
+
+
 def message_screen(title, lines):
     handle_secret_image_toggle()
     screen.fill(DARK)
@@ -1138,8 +1244,9 @@ def make_ai_input(ai, player, frame_count):
 
 
 def run_game_server(server):
-    p1 = Fighter(200, 300, "joseph", True)
-    p2 = Fighter(900, 300, "caesar", False)
+    p1_key, p2_key = server.get_characters()
+    p1 = Fighter(200, 300, p1_key, True)
+    p2 = Fighter(900, 300, p2_key, False)
     winner = None
     frame_duration = 1 / FPS
     send_duration = 1 / NET_FPS
@@ -1176,10 +1283,14 @@ def run_game_server(server):
 
 
 def run_singleplayer_game():
+    player_key = character_select_screen("SINGLE PLAYER SELECT")
+    if not player_key:
+        return "menu"
+    ai_key = "wamuu" if player_key != "wamuu" else "kars"
     stop_menu_music()
-    round_intro()
-    player = Fighter(200, 300, "joseph", True)
-    ai = Fighter(900, 300, "wamuu", False)
+    round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"])
+    player = Fighter(200, 300, player_key, True)
+    ai = Fighter(900, 300, ai_key, False)
     winner = None
     frame_count = 0
 
@@ -1207,9 +1318,9 @@ def run_singleplayer_game():
             if winner == 0:
                 draw_center("YOU WIN!", 430, True, YELLOW)
             else:
-                draw_center("WAMUU WINS!", 430, True, YELLOW)
+                draw_center(f"{CHARACTERS[ai_key]['name'].upper()} WINS!", 430, True, YELLOW)
 
-        draw_center("Single Player: Joseph vs. Wamuu", 675, False, GRAY)
+        draw_center(f"Single Player: {CHARACTERS[player_key]['name']} vs. {CHARACTERS[ai_key]['name']}", 675, False, GRAY)
         pygame.display.flip()
 
 
@@ -1307,7 +1418,7 @@ def intro_screen():
                 return
 
 
-def round_intro():
+def round_intro(p1_name="Joseph Joestar", p2_name="Wamuu"):
     labels = ["3", "2", "1", "FIGHT!"]
     for label in labels:
         frames = 45 if label != "FIGHT!" else 60
@@ -1323,7 +1434,7 @@ def round_intro():
             draw_stage()
             color = YELLOW if label == "FIGHT!" else WHITE
             draw_center(label, 260, True, color)
-            draw_center("Joseph Joestar vs. Wamuu", 350, False, CYAN)
+            draw_center(f"{p1_name} vs. {p2_name}", 350, False, CYAN)
             pygame.display.flip()
 
 
@@ -1412,7 +1523,11 @@ def controls_screen():
 
 def create_lobby_flow():
     play_menu_music()
-    server = LobbyServer()
+    host_character = character_select_screen("PLAYER 1 SELECT")
+    if not host_character:
+        return
+
+    server = LobbyServer(host_character)
     try:
         server.start()
     except Exception as e:
@@ -1449,19 +1564,23 @@ def create_lobby_flow():
         draw_center("LOBBY CREATED", 130, True, YELLOW)
         draw_center("Have Player 2 join using this IP:", 250)
         draw_center(local_ip, 310, True, WHITE)
+        status = "Ready to fight" if server.characters_ready() else "Waiting for Player 2 choice"
         draw_center(f"Players Connected: {server.player_count()} / 2", 420)
+        draw_center(status, 465, False, CYAN)
         draw_center("Esc = cancel lobby", 540, False, GRAY)
         draw_lobby_side_panel(server.player_count())
         draw_secret_image_popup()
         pygame.display.flip()
 
-        if server.player_count() >= 2:
+        if server.player_count() >= 2 and server.characters_ready():
             waiting = False
 
     def server_game_thread():
         run_game_server(server)
 
     stop_menu_music()
+    p1_key, p2_key = server.get_characters()
+    round_intro(CHARACTERS[p1_key]["name"], CHARACTERS[p2_key]["name"])
     threading.Thread(target=server_game_thread, daemon=True).start()
     run_client_game(client)
     server.stop()
@@ -1481,6 +1600,19 @@ def join_lobby_flow():
     except Exception as e:
         message_screen("JOIN FAILED", [str(e), "Make sure both devices are on the same Wi-Fi network.", "Press Enter"])
         wait_for_enter()
+        return
+
+    taken = [value for value in client.selections.values() if value]
+    character_key = character_select_screen("PLAYER 2 SELECT", taken)
+    if not character_key:
+        client.close()
+        return
+    try:
+        client.select_character(character_key)
+    except Exception as e:
+        message_screen("SELECT FAILED", [str(e), "Press Enter"])
+        wait_for_enter()
+        client.close()
         return
 
     stop_menu_music()
