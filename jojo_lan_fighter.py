@@ -1098,10 +1098,18 @@ def run_game_server(server):
     p1 = Fighter(200, 300, "joseph", True)
     p2 = Fighter(900, 300, "caesar", False)
     winner = None
-    server_clock = pygame.time.Clock()
+    frame_duration = 1 / FPS
+    next_frame_time = time.perf_counter()
 
     while server.running:
-        server_clock.tick(FPS)
+        now = time.perf_counter()
+        if now < next_frame_time:
+            time.sleep(next_frame_time - now)
+        next_frame_time += frame_duration
+
+        if time.perf_counter() - next_frame_time > frame_duration:
+            next_frame_time = time.perf_counter()
+
         inputs = server.get_inputs()
 
         if inputs[0].get("menu") or inputs[1].get("menu"):
