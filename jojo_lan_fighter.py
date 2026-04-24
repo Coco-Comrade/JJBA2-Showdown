@@ -313,8 +313,10 @@ class GameClient:
         self.sock.settimeout(None)
 
         data, self.buffer = recv_json(self.sock, self.buffer)
-        if data["type"] == "full":
+        if data.get("type") == "full":
             raise ConnectionError("Lobby is full")
+        if data.get("type") != "welcome" or "player_id" not in data:
+            raise ConnectionError("Bad server response")
 
         self.player_id = data["player_id"]
         self.running = True
@@ -1122,6 +1124,7 @@ def run_game_server(server):
     send_duration = 1 / NET_FPS
     next_frame_time = time.perf_counter()
     next_send_time = next_frame_time
+    server.broadcast_state(make_state(p1, p2, winner))
 
     while server.running:
         now = time.perf_counter()
@@ -1212,11 +1215,6 @@ def run_client_game(client):
             wait_for_enter()
             return "menu"
 
-        if client.error:
-            message_screen("CONNECTION LOST", [str(client.error), "Press Enter to return to the menu"])
-            wait_for_enter()
-            return "menu"
-
         state = client.get_state()
         if state:
             last_state_time = time.time()
@@ -1225,6 +1223,14 @@ def run_client_game(client):
                 return "menu"
         else:
             message_screen("WAITING FOR BATTLE DATA", ["The server is warming up the arena..."])
+
+        if client.error:
+            if state and state.get("disconnected"):
+                draw_center("Press Esc to return to the menu", 390, False, WHITE)
+            else:
+                message_screen("CONNECTION LOST", [str(client.error), "Press Enter to return to the menu"])
+                wait_for_enter()
+                return "menu"
 
         if time.time() - last_state_time > 3:
             draw_center("Network delay...", 610, False, YELLOW)
