@@ -249,7 +249,7 @@ class LobbyServer:
 
     def get_inputs(self):
         with self.lock:
-            return json.loads(json.dumps(self.inputs))
+            return {pid: dict(inp) for pid, inp in self.inputs.items()}
 
     def broadcast_state(self, state):
         with self.lock:
