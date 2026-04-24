@@ -34,6 +34,8 @@ NET_FPS = 30
 GRAVITY = 1
 GROUND_Y = 580
 PORT = 5555
+JUMP_BUFFER_FRAMES = 7
+COYOTE_FRAMES = 6
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -386,6 +388,8 @@ class Fighter:
         self.facing_right = facing_right
         self.prev_attack_buttons = {button: False for button in ATTACK_BUTTONS}
         self.combo_text_timer = 0
+        self.jump_buffer = 0
+        self.coyote_timer = 0
 
     def reset(self, x, y, facing_right):
         self.rect.x = x
@@ -402,6 +406,8 @@ class Fighter:
         self.facing_right = facing_right
         self.prev_attack_buttons = {button: False for button in ATTACK_BUTTONS}
         self.combo_text_timer = 0
+        self.jump_buffer = 0
+        self.coyote_timer = 0
 
     def face_opponent(self, opponent):
         if self.attacking or self.hit_stun > 0:
@@ -412,6 +418,11 @@ class Fighter:
         if self.hp <= 0:
             self.remember_attack_buttons(inp)
             return
+
+        if inp["jump"]:
+            self.jump_buffer = JUMP_BUFFER_FRAMES
+        elif self.jump_buffer > 0:
+            self.jump_buffer -= 1
 
         if self.hit_stun > 0:
             self.blocking = False
@@ -427,9 +438,12 @@ class Fighter:
             if inp["right"]:
                 dx += self.speed
 
-        if inp["jump"] and self.on_ground and not self.attacking:
+        can_jump = (self.on_ground or self.coyote_timer > 0) and not self.attacking
+        if self.jump_buffer > 0 and can_jump:
             self.vel_y = self.jump_power
             self.on_ground = False
+            self.coyote_timer = 0
+            self.jump_buffer = 0
 
         self.blocking = inp["block"] and not self.attacking and self.on_ground
 
@@ -456,6 +470,13 @@ class Fighter:
             self.rect.bottom = GROUND_Y
             self.vel_y = 0
             self.on_ground = True
+            self.coyote_timer = COYOTE_FRAMES
+        else:
+            if self.on_ground:
+                self.coyote_timer = COYOTE_FRAMES
+            elif self.coyote_timer > 0:
+                self.coyote_timer -= 1
+            self.on_ground = False
 
     def start_attack(self, attack_type):
         data = ATTACKS[attack_type]
@@ -941,11 +962,11 @@ def draw_lobby_side_panel(players=1):
     draw_gold_frame(controls, 3)
     draw_small("CONTROLS", 990, 510, CYAN, 240)
     draw_small("MOVE: A/D OR ARROWS", 990, 540, WHITE, 240)
-    draw_small("JUMP: W OR UP", 990, 564, WHITE, 240)
-    draw_small("BLOCK: S OR DOWN", 990, 588, WHITE, 240)
-    draw_small("LIGHT: J", 990, 612, WHITE, 240)
-    draw_small("MEDIUM: K", 990, 636, WHITE, 240)
-    draw_small("HEAVY: L", 990, 660, WHITE, 240)
+    draw_small("JUMP: W / UP / SPACE", 990, 564, WHITE, 240)
+    draw_small("BLOCK: S / DOWN / SHIFT", 990, 588, WHITE, 240)
+    draw_small("LIGHT: J OR U", 990, 612, WHITE, 240)
+    draw_small("MEDIUM: K OR I", 990, 636, WHITE, 240)
+    draw_small("HEAVY: L OR O", 990, 660, WHITE, 240)
     draw_small("MENU: ESC", 990, 684, WHITE, 240)
 
 
@@ -1011,11 +1032,11 @@ def get_local_input():
     inp = empty_input()
     inp["left"] = keys[pygame.K_a] or keys[pygame.K_LEFT]
     inp["right"] = keys[pygame.K_d] or keys[pygame.K_RIGHT]
-    inp["jump"] = keys[pygame.K_w] or keys[pygame.K_UP]
-    inp["block"] = keys[pygame.K_s] or keys[pygame.K_DOWN]
-    inp["light"] = keys[pygame.K_j] or keys[pygame.K_KP1]
-    inp["medium"] = keys[pygame.K_k] or keys[pygame.K_KP2]
-    inp["heavy"] = keys[pygame.K_l] or keys[pygame.K_KP3]
+    inp["jump"] = keys[pygame.K_w] or keys[pygame.K_UP] or keys[pygame.K_SPACE]
+    inp["block"] = keys[pygame.K_s] or keys[pygame.K_DOWN] or keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+    inp["light"] = keys[pygame.K_j] or keys[pygame.K_u] or keys[pygame.K_KP1]
+    inp["medium"] = keys[pygame.K_k] or keys[pygame.K_i] or keys[pygame.K_KP2]
+    inp["heavy"] = keys[pygame.K_l] or keys[pygame.K_o] or keys[pygame.K_KP3]
     inp["restart"] = keys[pygame.K_r]
     inp["menu"] = keys[pygame.K_ESCAPE]
     return inp
@@ -1360,15 +1381,15 @@ def lobby_menu():
 def controls_screen():
     lines = [
         "Move: A/D or Left/Right",
-        "Jump: W or Up",
-        "Block: S or Down",
-        "Ripple Jab: J or Numpad 1",
-        "Bubble Cutter: K or Numpad 2",
-        "Sunlight Overdrive: L or Numpad 3",
+        "Jump: W, Up, or Space",
+        "Block: S, Down, or Shift",
+        "Ripple Jab: J, U, or Numpad 1",
+        "Bubble Cutter: K, I, or Numpad 2",
+        "Sunlight Overdrive: L, O, or Numpad 3",
         "Restart after KO: R",
         "Menu: Esc",
         "",
-        "Tap attacks. Held buttons will not auto-repeat.",
+        "Jumps have a short buffer and coyote time.",
     ]
     while True:
         clock.tick(FPS)
