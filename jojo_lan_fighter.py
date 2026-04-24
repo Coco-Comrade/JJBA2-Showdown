@@ -122,6 +122,58 @@ CHARACTERS = {
 }
 CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim")
 
+DIFFICULTIES = {
+    "easy": {
+        "label": "Easy",
+        "description": "Slower reactions, fewer blocks",
+        "approach": 125,
+        "retreat": 36,
+        "block_range": 110,
+        "block_chance_mod": 4,
+        "light_rate": 30,
+        "medium_rate": 48,
+        "heavy_rate": 85,
+        "jump_rate": 210,
+    },
+    "normal": {
+        "label": "Normal",
+        "description": "Balanced arcade pressure",
+        "approach": 110,
+        "retreat": 40,
+        "block_range": 140,
+        "block_chance_mod": 3,
+        "light_rate": 20,
+        "medium_rate": 34,
+        "heavy_rate": 60,
+        "jump_rate": 150,
+    },
+    "hard": {
+        "label": "Hard",
+        "description": "Fast pressure and smarter blocks",
+        "approach": 88,
+        "retreat": 34,
+        "block_range": 175,
+        "block_chance_mod": 2,
+        "light_rate": 12,
+        "medium_rate": 18,
+        "heavy_rate": 26,
+        "jump_rate": 95,
+    },
+    "ultimate": {
+        "label": "Ultimate",
+        "description": "Very mean. Very JoJo.",
+        "approach": 76,
+        "retreat": 28,
+        "block_range": 210,
+        "block_chance_mod": 1,
+        "light_rate": 8,
+        "medium_rate": 13,
+        "heavy_rate": 18,
+        "jump_rate": 70,
+    },
+}
+DIFFICULTY_ORDER = ("easy", "normal", "hard", "ultimate")
+
 ATTACKS = {
     "light": {
         "label": "Ripple Jab",
@@ -1077,6 +1129,42 @@ def character_select_screen(title, unavailable=None):
                     return available[selected]
 
 
+def difficulty_select_screen():
+    selected = 1
+
+    while True:
+        clock.tick(FPS)
+        handle_secret_image_toggle()
+        draw_menu_background()
+        draw_center("DIFFICULTY", 88, True, YELLOW)
+        draw_center("Choose how badly the AI wants to win", 160, False, CYAN)
+
+        for index, key in enumerate(DIFFICULTY_ORDER):
+            data = DIFFICULTIES[key]
+            rect = pygame.Rect(405, 235 + index * 88, 470, 62)
+            draw_menu_button(data["label"], rect, index == selected)
+            desc_rect = pygame.Rect(rect.x + 18, rect.bottom + 2, rect.width - 36, 22)
+            draw_text_in_rect(data["description"], desc_rect, small_font, GRAY, min_size=12)
+
+        draw_center("Up/Down = change    Enter = select    Esc = back", 650, False, GRAY)
+        draw_secret_image_popup()
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                quit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                if event.key in (pygame.K_UP, pygame.K_w, pygame.K_LEFT, pygame.K_a):
+                    selected = (selected - 1) % len(DIFFICULTY_ORDER)
+                elif event.key in (pygame.K_DOWN, pygame.K_s, pygame.K_RIGHT, pygame.K_d):
+                    selected = (selected + 1) % len(DIFFICULTY_ORDER)
+                elif event.key == pygame.K_RETURN:
+                    return DIFFICULTY_ORDER[selected]
+
+
 def message_screen(title, lines):
     handle_secret_image_toggle()
     screen.fill(DARK)
@@ -1208,8 +1296,9 @@ def step_fight(p1, p2, input1, input2, winner):
     return winner
 
 
-def make_ai_input(ai, player, frame_count):
+def make_ai_input(ai, player, frame_count, difficulty_key="hard"):
     inp = empty_input()
+    difficulty = DIFFICULTIES.get(difficulty_key, DIFFICULTIES["hard"])
     distance = player.rect.centerx - ai.rect.centerx
     abs_distance = abs(distance)
 
@@ -1217,37 +1306,37 @@ def make_ai_input(ai, player, frame_count):
         return inp
 
     attack_box = player.get_attack_box()
-    danger_close = player.attacking and abs_distance < 175
+    danger_close = player.attacking and abs_distance < difficulty["block_range"]
 
-    if danger_close and ai.on_ground:
+    if danger_close and ai.on_ground and frame_count % difficulty["block_chance_mod"] == 0:
         inp["block"] = True
 
-    if abs_distance > 88:
+    if abs_distance > difficulty["approach"]:
         if distance > 0:
             inp["right"] = True
         else:
             inp["left"] = True
-    elif abs_distance < 34 and not ai.attacking:
+    elif abs_distance < difficulty["retreat"] and not ai.attacking:
         if distance > 0:
             inp["left"] = True
         else:
             inp["right"] = True
 
-    if attack_box and attack_box.colliderect(ai.rect.inflate(70, 30)) and ai.on_ground:
+    if attack_box and attack_box.colliderect(ai.rect.inflate(70, 30)) and ai.on_ground and frame_count % difficulty["block_chance_mod"] == 0:
         inp["block"] = True
 
     if 45 <= abs_distance <= 170 and not ai.attacking:
-        if abs_distance > 118 and frame_count % 26 in (0, 1):
+        if abs_distance > 118 and frame_count % difficulty["heavy_rate"] in (0, 1):
             inp["heavy"] = True
-        elif abs_distance > 82 and frame_count % 18 in (0, 1):
+        elif abs_distance > 82 and frame_count % difficulty["medium_rate"] in (0, 1):
             inp["medium"] = True
-        elif frame_count % 12 in (0, 1, 2):
+        elif frame_count % difficulty["light_rate"] in (0, 1, 2):
             inp["light"] = True
 
-    if player.hp <= 35 and abs_distance < 190 and not ai.attacking and frame_count % 14 in (0, 1):
+    if player.hp <= 35 and abs_distance < 190 and not ai.attacking and frame_count % max(8, difficulty["heavy_rate"] // 2) in (0, 1):
         inp["heavy"] = True
 
-    if frame_count % 95 == 0 and ai.on_ground and abs_distance < 300:
+    if frame_count % difficulty["jump_rate"] == 0 and ai.on_ground and abs_distance < 300:
         inp["jump"] = True
 
     return inp
@@ -1296,6 +1385,9 @@ def run_singleplayer_game():
     player_key = character_select_screen("SINGLE PLAYER SELECT")
     if not player_key:
         return "menu"
+    difficulty_key = difficulty_select_screen()
+    if not difficulty_key:
+        return "menu"
     ai_key = random.choice([key for key in CHARACTER_ORDER if key != player_key])
     stop_menu_music()
     round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"])
@@ -1318,7 +1410,7 @@ def run_singleplayer_game():
         if player_input["menu"]:
             return "menu"
 
-        ai_input = make_ai_input(ai, player, frame_count)
+        ai_input = make_ai_input(ai, player, frame_count, difficulty_key)
         winner = step_fight(player, ai, player_input, ai_input, winner)
 
         state = make_state(player, ai, winner)
@@ -1330,7 +1422,12 @@ def run_singleplayer_game():
             else:
                 draw_center(f"{CHARACTERS[ai_key]['name'].upper()} WINS!", 430, True, YELLOW)
 
-        draw_center(f"Single Player: {CHARACTERS[player_key]['name']} vs. {CHARACTERS[ai_key]['name']}", 675, False, GRAY)
+        draw_center(
+            f"Single Player: {CHARACTERS[player_key]['name']} vs. {CHARACTERS[ai_key]['name']} - {DIFFICULTIES[difficulty_key]['label']}",
+            675,
+            False,
+            GRAY,
+        )
         pygame.display.flip()
 
 
