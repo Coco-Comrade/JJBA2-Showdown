@@ -30,6 +30,7 @@ prev_c_and_p = False
 WIDTH = 1280
 HEIGHT = 720
 FPS = 60
+NET_FPS = 30
 GRAVITY = 1
 GROUND_Y = 580
 PORT = 5555
@@ -166,6 +167,13 @@ def send_json(sock, data):
     sock.sendall(message.encode())
 
 
+def tune_socket(sock):
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except Exception:
+        pass
+
+
 def recv_json(sock, buffer):
     while "\n" not in buffer:
         chunk = sock.recv(4096).decode()
@@ -203,6 +211,7 @@ class LobbyServer:
         while self.running:
             try:
                 conn, addr = self.server_socket.accept()
+                tune_socket(conn)
 
                 with self.lock:
                     if len(self.clients) >= 2:
@@ -244,19 +253,22 @@ class LobbyServer:
 
     def broadcast_state(self, state):
         with self.lock:
-            dead = []
-            for pid, conn in self.clients.items():
-                try:
-                    send_json(conn, {"type": "state", "state": state})
-                except Exception:
-                    dead.append(pid)
+            client_items = list(self.clients.items())
 
-            for pid in dead:
-                if pid in self.clients:
-                    del self.clients[pid]
-                self.inputs[pid] = empty_input()
+        dead = []
+        for pid, conn in client_items:
+            try:
+                send_json(conn, {"type": "state", "state": state})
+            except Exception:
+                dead.append(pid)
 
-            self.started = len(self.clients) == 2
+        if dead:
+            with self.lock:
+                for pid in dead:
+                    if pid in self.clients:
+                        del self.clients[pid]
+                    self.inputs[pid] = empty_input()
+                self.started = len(self.clients) == 2
 
     def player_count(self):
         with self.lock:
@@ -290,9 +302,12 @@ class GameClient:
         self.running = False
         self.receiver_thread = None
         self.lock = threading.Lock()
+        self.last_sent_input = None
+        self.last_input_send_time = 0
 
     def connect(self, host_ip):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tune_socket(self.sock)
         self.sock.settimeout(8)
         self.sock.connect((host_ip, PORT))
         self.sock.settimeout(None)
@@ -321,7 +336,12 @@ class GameClient:
                 break
 
     def send_input(self, input_data):
+        now = time.perf_counter()
+        if input_data == self.last_sent_input and now - self.last_input_send_time < 0.1:
+            return
         send_json(self.sock, {"type": "input", "input": input_data})
+        self.last_sent_input = dict(input_data)
+        self.last_input_send_time = now
 
     def get_state(self):
         with self.lock:
@@ -1099,7 +1119,9 @@ def run_game_server(server):
     p2 = Fighter(900, 300, "caesar", False)
     winner = None
     frame_duration = 1 / FPS
+    send_duration = 1 / NET_FPS
     next_frame_time = time.perf_counter()
+    next_send_time = next_frame_time
 
     while server.running:
         now = time.perf_counter()
@@ -1120,7 +1142,11 @@ def run_game_server(server):
             return "menu"
 
         winner = step_fight(p1, p2, inputs[0], inputs[1], winner)
-        server.broadcast_state(make_state(p1, p2, winner))
+
+        now = time.perf_counter()
+        if now >= next_send_time:
+            server.broadcast_state(make_state(p1, p2, winner))
+            next_send_time = now + send_duration
 
     return "menu"
 
