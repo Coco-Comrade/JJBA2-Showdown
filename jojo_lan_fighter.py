@@ -4,6 +4,7 @@ import threading
 import json
 import time
 import os
+import random
 import urllib.parse
 import urllib.request
 
@@ -1215,29 +1216,38 @@ def make_ai_input(ai, player, frame_count):
     if ai.hit_stun > 0:
         return inp
 
-    if abs_distance > 110:
-        if distance > 0:
-            inp["right"] = True
-        else:
-            inp["left"] = True
-    elif abs_distance < 48:
-        if distance > 0:
-            inp["left"] = True
-        else:
-            inp["right"] = True
+    attack_box = player.get_attack_box()
+    danger_close = player.attacking and abs_distance < 175
 
-    if 62 <= abs_distance <= 145 and not ai.attacking:
-        if frame_count % 42 == 0:
-            inp["light"] = True
-        elif frame_count % 86 == 0:
-            inp["medium"] = True
-        elif frame_count % 155 == 0:
-            inp["heavy"] = True
-
-    if player.attacking and abs_distance < 155 and frame_count % 3 != 0:
+    if danger_close and ai.on_ground:
         inp["block"] = True
 
-    if frame_count % 210 == 0 and ai.on_ground and abs_distance < 260:
+    if abs_distance > 88:
+        if distance > 0:
+            inp["right"] = True
+        else:
+            inp["left"] = True
+    elif abs_distance < 34 and not ai.attacking:
+        if distance > 0:
+            inp["left"] = True
+        else:
+            inp["right"] = True
+
+    if attack_box and attack_box.colliderect(ai.rect.inflate(70, 30)) and ai.on_ground:
+        inp["block"] = True
+
+    if 45 <= abs_distance <= 170 and not ai.attacking:
+        if abs_distance > 118 and frame_count % 26 in (0, 1):
+            inp["heavy"] = True
+        elif abs_distance > 82 and frame_count % 18 in (0, 1):
+            inp["medium"] = True
+        elif frame_count % 12 in (0, 1, 2):
+            inp["light"] = True
+
+    if player.hp <= 35 and abs_distance < 190 and not ai.attacking and frame_count % 14 in (0, 1):
+        inp["heavy"] = True
+
+    if frame_count % 95 == 0 and ai.on_ground and abs_distance < 300:
         inp["jump"] = True
 
     return inp
@@ -1286,7 +1296,7 @@ def run_singleplayer_game():
     player_key = character_select_screen("SINGLE PLAYER SELECT")
     if not player_key:
         return "menu"
-    ai_key = "wamuu" if player_key != "wamuu" else "kars"
+    ai_key = random.choice([key for key in CHARACTER_ORDER if key != player_key])
     stop_menu_music()
     round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"])
     player = Fighter(200, 300, player_key, True)
