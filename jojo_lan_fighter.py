@@ -730,6 +730,14 @@ def play_menu_music():
             music_error_printed = True
 
 
+def stop_menu_music():
+    try:
+        if pygame.mixer.get_init() and pygame.mixer.music.get_busy():
+            pygame.mixer.music.stop()
+    except Exception:
+        pass
+
+
 def get_music_file():
     global music_error_printed
     source = MUSIC_SOURCE.strip()
@@ -1110,6 +1118,7 @@ def run_game_server(server):
 
 
 def run_singleplayer_game():
+    stop_menu_music()
     round_intro()
     player = Fighter(200, 300, "joseph", True)
     ai = Fighter(900, 300, "wamuu", False)
@@ -1391,6 +1400,7 @@ def create_lobby_flow():
     def server_game_thread():
         run_game_server(server)
 
+    stop_menu_music()
     threading.Thread(target=server_game_thread, daemon=True).start()
     run_client_game(client)
     server.stop()
@@ -1412,6 +1422,7 @@ def join_lobby_flow():
         wait_for_enter()
         return
 
+    stop_menu_music()
     run_client_game(client)
     client.close()
 
