@@ -119,8 +119,30 @@ CHARACTERS = {
         "speed": 5,
         "jump": -18,
     },
+    "dio": {
+        "name": "DIO",
+        "title": "The World",
+        "color": (250, 205, 35),
+        "accent": (45, 210, 115),
+        "aura": (255, 230, 85),
+        "speed": 6,
+        "jump": -21,
+    },
 }
-CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim")
+CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim", "dio")
+
+DIO_ANIMATIONS = {
+    "idle": [0, 3, 6, 9, 12, 15, 18, 21],
+    "walk": [333, 336, 342, 345, 348, 351, 354],
+    "jump": [90, 96, 99, 102, 105],
+    "block": [500, 503, 506, 509, 512],
+    "light": [369, 372, 375, 378],
+    "medium": [381, 384, 387],
+    "heavy": [536, 539, 542, 545, 548, 551],
+    "hit": [527, 530, 533],
+    "ko": [554, 557],
+}
+sprite_cache = {}
 
 DIFFICULTIES = {
     "easy": {
@@ -657,6 +679,7 @@ class Fighter:
             "hit_stun": self.hit_stun,
             "combo_text_timer": self.combo_text_timer,
             "character_key": self.character_key,
+            "on_ground": self.on_ground,
         }
 
 
@@ -744,6 +767,62 @@ def draw_aura(rect, color, facing_right, pulse):
     pygame.draw.circle(screen, color, (rect.centerx, rect.y + 80), radius + 10, 1)
 
 
+def load_sprite_image(path):
+    if path in sprite_cache:
+        return sprite_cache[path]
+    try:
+        image = pygame.image.load(path).convert_alpha()
+        bounds = image.get_bounding_rect()
+        if bounds.width > 0 and bounds.height > 0:
+            image = image.subsurface(bounds).copy()
+        sprite_cache[path] = image
+        return image
+    except Exception:
+        sprite_cache[path] = None
+        return None
+
+
+def dio_animation_name(p):
+    if p["hp"] <= 0:
+        return "ko"
+    if p["hit_stun"] > 0 or p["hit_cooldown"] > 0:
+        return "hit"
+    if p["blocking"]:
+        return "block"
+    if p["attacking"] and p["attack_type"] in DIO_ANIMATIONS:
+        return p["attack_type"]
+    if not p.get("on_ground", True):
+        return "jump"
+    return "idle"
+
+
+def draw_dio_sprite(p, rect, facing_right):
+    anim = dio_animation_name(p)
+    frames = DIO_ANIMATIONS[anim]
+    tick = pygame.time.get_ticks() // 95
+    frame_number = frames[tick % len(frames)]
+    path = os.path.join(BASE_DIR, "assets", "sprites", "dio_anim", f"DIO_0-{frame_number}.png")
+    image = load_sprite_image(path)
+    if image is None:
+        return False
+
+    target_height = 190 if anim not in ("ko", "heavy") else 170
+    scale = target_height / image.get_height()
+    target_size = (max(1, int(image.get_width() * scale)), target_height)
+    image = pygame.transform.scale(image, target_size)
+    if not facing_right:
+        image = pygame.transform.flip(image, True, False)
+
+    draw_x = rect.centerx - image.get_width() // 2
+    draw_y = rect.bottom - image.get_height() + 12
+    screen.blit(image, (draw_x, draw_y))
+
+    if p["blocking"]:
+        shield_x = rect.right + 10 if facing_right else rect.left - 32
+        pygame.draw.ellipse(screen, BLUE, (shield_x, rect.y + 20, 26, 100), 4)
+    return True
+
+
 def draw_fighter_from_state(p):
     char = CHARACTERS[p.get("character_key", "joseph")]
     rect = pygame.Rect(p["x"], p["y"], 80, 160)
@@ -751,6 +830,11 @@ def draw_fighter_from_state(p):
     pulse = pygame.time.get_ticks() // 80
 
     draw_aura(rect, char["aura"], facing_right, pulse)
+
+    if p.get("character_key") == "dio" and draw_dio_sprite(p, rect, facing_right):
+        if p["combo_text_timer"] > 0:
+            draw_small("MUDA!", rect.centerx - 28, rect.y - 62, char["accent"])
+        return
 
     body_color = char["color"]
     if p["hit_cooldown"] > 0:
@@ -1101,9 +1185,9 @@ def character_select_screen(title, unavailable=None):
         draw_center("Choose your fighter", 145, False, CYAN)
 
         for index, key in enumerate(CHARACTER_ORDER):
-            row = index // 3
-            col = index % 3
-            rect = pygame.Rect(185 + col * 310, 210 + row * 215, 245, 175)
+            row = index // 4
+            col = index % 4
+            rect = pygame.Rect(90 + col * 285, 215 + row * 195, 235, 165)
             is_locked = key in unavailable
             is_selected = available and key == available[selected]
             draw_character_card(key, rect, is_selected, is_locked)
