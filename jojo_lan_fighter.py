@@ -66,9 +66,9 @@ big_font = pygame.font.SysFont("arial", 64)
 # =========================
 CHARACTERS = {
     "joseph": {
-        "name": "Joseph",
+        "name": "Old Joseph",
         "title": "Trickster Ripple",
-        "color": RED,
+        "color": (205, 142, 58),
         "accent": CYAN,
         "aura": (75, 210, 255),
         "speed": 7,
@@ -119,28 +119,23 @@ CHARACTERS = {
         "speed": 5,
         "jump": -18,
     },
-    "dio": {
-        "name": "DIO",
-        "title": "The World",
-        "color": (250, 205, 35),
-        "accent": (45, 210, 115),
-        "aura": (255, 230, 85),
-        "speed": 6,
-        "jump": -21,
-    },
 }
-CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim", "dio")
+CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim")
 
-DIO_ANIMATIONS = {
-    "idle": [0, 3, 6, 9, 12, 15, 18, 21],
-    "walk": [333, 336, 342, 345, 348, 351, 354],
-    "jump": [90, 96, 99, 102, 105],
-    "block": [500, 503, 506, 509, 512],
-    "light": [369, 372, 375, 378],
-    "medium": [381, 384, 387],
-    "heavy": [536, 539, 542, 545, 548, 551],
-    "hit": [527, 530, 533],
-    "ko": [554, 557],
+SPRITE_ANIMATIONS = {
+    "joseph": {
+        "folder": "old_joseph",
+        "idle": 8,
+        "walk": 8,
+        "jump": 6,
+        "block": 8,
+        "light": 5,
+        "medium": 5,
+        "heavy": 5,
+        "hit": 5,
+        "ko": 3,
+        "height": 174,
+    }
 }
 sprite_cache = {}
 
@@ -740,6 +735,67 @@ def draw_hp_bar(x, y, hp, name, accent):
     draw_small(name, x, y - 26, accent)
 
 
+def draw_character_portrait(character_key, rect, flip=False):
+    sprite_data = SPRITE_ANIMATIONS.get(character_key)
+    if sprite_data:
+        path = os.path.join(BASE_DIR, "assets", "sprites", sprite_data["folder"], "idle", "0.png")
+        image = load_sprite_image(path)
+        if image:
+            image = pygame.transform.scale(image, (int(image.get_width() * rect.height / image.get_height()), rect.height))
+            if flip:
+                image = pygame.transform.flip(image, True, False)
+            crop = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            crop.blit(image, (rect.centerx - rect.x - image.get_width() // 2, 0))
+            screen.blit(crop, rect.topleft)
+            return
+
+    char = CHARACTERS[character_key]
+    pygame.draw.rect(screen, char["color"], rect.inflate(-16, -10), border_radius=4)
+    pygame.draw.circle(screen, (235, 190, 150), rect.center, rect.height // 4)
+
+
+def draw_arcade_hud(state):
+    p1 = state["players"]["0"]
+    p2 = state["players"]["1"]
+    c1 = CHARACTERS[p1.get("character_key", "joseph")]
+    c2 = CHARACTERS[p2.get("character_key", "caesar")]
+
+    pygame.draw.rect(screen, (26, 21, 70), (0, 0, WIDTH, 104))
+    pygame.draw.rect(screen, (245, 202, 42), (12, 14, WIDTH - 24, 46), border_radius=3)
+    pygame.draw.rect(screen, (95, 55, 18), (18, 20, WIDTH - 36, 34), 3, border_radius=3)
+    pygame.draw.polygon(screen, (232, 190, 35), [(WIDTH // 2 - 72, 8), (WIDTH // 2 + 72, 8), (WIDTH // 2 + 48, 88), (WIDTH // 2 - 48, 88)])
+    pygame.draw.rect(screen, (18, 29, 88), (WIDTH // 2 - 32, 24, 64, 48), border_radius=4)
+    draw_text_in_rect("40", pygame.Rect(WIDTH // 2 - 26, 28, 52, 40), big_font, YELLOW, bold=True, min_size=24)
+
+    draw_text("CHALLENGER", 72, 2, False, YELLOW, 250)
+    right_label = font.render("CHALLENGER", True, YELLOW)
+    screen.blit(right_label, (WIDTH - 72 - right_label.get_width(), 2))
+
+    left_portrait = pygame.Rect(18, 34, 72, 62)
+    right_portrait = pygame.Rect(WIDTH - 90, 34, 72, 62)
+    pygame.draw.rect(screen, (41, 24, 75), left_portrait)
+    pygame.draw.rect(screen, (41, 24, 75), right_portrait)
+    pygame.draw.rect(screen, YELLOW, left_portrait, 3)
+    pygame.draw.rect(screen, YELLOW, right_portrait, 3)
+    draw_character_portrait(p1.get("character_key", "joseph"), left_portrait)
+    draw_character_portrait(p2.get("character_key", "caesar"), right_portrait, True)
+
+    left_bar = pygame.Rect(112, 42, 382, 18)
+    right_bar = pygame.Rect(WIDTH - 494, 42, 382, 18)
+    pygame.draw.rect(screen, (90, 23, 38), left_bar)
+    pygame.draw.rect(screen, (90, 23, 38), right_bar)
+    pygame.draw.rect(screen, (74, 236, 120), (left_bar.x, left_bar.y, int(left_bar.width * p1["hp"] / 100), left_bar.height))
+    right_hp_width = int(right_bar.width * p2["hp"] / 100)
+    pygame.draw.rect(screen, (74, 236, 120), (right_bar.right - right_hp_width, right_bar.y, right_hp_width, right_bar.height))
+    pygame.draw.rect(screen, WHITE, left_bar, 2)
+    pygame.draw.rect(screen, WHITE, right_bar, 2)
+
+    draw_small(c1["name"].upper(), 112, 64, WHITE, 240)
+    p2_name = small_font.render(c2["name"].upper(), True, WHITE)
+    screen.blit(p2_name, (right_bar.right - p2_name.get_width(), 64))
+    draw_small("STAND", WIDTH - 370, 76, YELLOW, 140)
+
+
 def draw_stage():
     screen.fill(NIGHT)
     pygame.draw.rect(screen, (28, 24, 48), (0, 0, WIDTH, HEIGHT))
@@ -782,31 +838,37 @@ def load_sprite_image(path):
         return None
 
 
-def dio_animation_name(p):
+def sprite_animation_name(p):
     if p["hp"] <= 0:
         return "ko"
     if p["hit_stun"] > 0 or p["hit_cooldown"] > 0:
         return "hit"
     if p["blocking"]:
         return "block"
-    if p["attacking"] and p["attack_type"] in DIO_ANIMATIONS:
+    if p["attacking"] and p["attack_type"]:
         return p["attack_type"]
     if not p.get("on_ground", True):
         return "jump"
     return "idle"
 
 
-def draw_dio_sprite(p, rect, facing_right):
-    anim = dio_animation_name(p)
-    frames = DIO_ANIMATIONS[anim]
+def draw_character_sprite(p, rect, facing_right):
+    sprite_data = SPRITE_ANIMATIONS.get(p.get("character_key"))
+    if not sprite_data:
+        return False
+
+    anim = sprite_animation_name(p)
+    frame_count = sprite_data.get(anim, sprite_data["idle"])
     tick = pygame.time.get_ticks() // 95
-    frame_number = frames[tick % len(frames)]
-    path = os.path.join(BASE_DIR, "assets", "sprites", "dio_anim", f"DIO_0-{frame_number}.png")
+    frame_number = tick % frame_count
+    path = os.path.join(BASE_DIR, "assets", "sprites", sprite_data["folder"], anim, f"{frame_number}.png")
     image = load_sprite_image(path)
     if image is None:
         return False
 
-    target_height = 190 if anim not in ("ko", "heavy") else 170
+    target_height = sprite_data.get("height", 170)
+    if anim == "ko":
+        target_height = int(target_height * 0.82)
     scale = target_height / image.get_height()
     target_size = (max(1, int(image.get_width() * scale)), target_height)
     image = pygame.transform.scale(image, target_size)
@@ -831,9 +893,9 @@ def draw_fighter_from_state(p):
 
     draw_aura(rect, char["aura"], facing_right, pulse)
 
-    if p.get("character_key") == "dio" and draw_dio_sprite(p, rect, facing_right):
+    if draw_character_sprite(p, rect, facing_right):
         if p["combo_text_timer"] > 0:
-            draw_small("MUDA!", rect.centerx - 28, rect.y - 62, char["accent"])
+            draw_small("ORA!", rect.centerx - 18, rect.y - 62, char["accent"])
         return
 
     body_color = char["color"]
@@ -887,16 +949,15 @@ def draw_match(state, player_id):
     draw_fighter_from_state(p1)
     draw_fighter_from_state(p2)
 
-    draw_hp_bar(50, 48, p1["hp"], f"P1  {c1['name']}", c1["accent"])
-    draw_hp_bar(WIDTH - 350, 48, p2["hp"], f"P2  {c2['name']}", c2["accent"])
-    draw_center(f"You are Player {player_id + 1}", 12)
+    draw_arcade_hud(state)
+    draw_center(f"You are Player {player_id + 1}", 104, False, WHITE, 300)
 
     if p1.get("attacking") and p1.get("attack_type"):
-        draw_small(ATTACKS[p1["attack_type"]]["label"], 52, 86, c1["accent"])
+        draw_small(ATTACKS[p1["attack_type"]]["label"], 112, 86, c1["accent"], 260)
     if p2.get("attacking") and p2.get("attack_type"):
         label = ATTACKS[p2["attack_type"]]["label"]
         img = small_font.render(label, True, c2["accent"])
-        screen.blit(img, (WIDTH - 52 - img.get_width(), 86))
+        screen.blit(img, (WIDTH - 112 - img.get_width(), 86))
 
     if state.get("disconnected"):
         draw_center("OPPONENT DISCONNECTED", 240, True, YELLOW)
@@ -1162,9 +1223,13 @@ def draw_character_card(character_key, rect, selected=False, locked=False):
     pygame.draw.rect(screen, char["accent"] if not locked else GRAY, rect, 3 if selected else 2, border_radius=4)
 
     body = pygame.Rect(rect.centerx - 22, rect.y + 32, 44, 72)
-    pygame.draw.circle(screen, char["aura"], (body.centerx, body.y + 20), 35, 2)
-    pygame.draw.rect(screen, char["color"] if not locked else GRAY, body, border_radius=4)
-    pygame.draw.ellipse(screen, (235, 190, 150), (body.x + 8, body.y - 22, 28, 28))
+    if character_key in SPRITE_ANIMATIONS and not locked:
+        preview = pygame.Rect(rect.centerx - 45, rect.y + 18, 90, 94)
+        draw_character_portrait(character_key, preview)
+    else:
+        pygame.draw.circle(screen, char["aura"], (body.centerx, body.y + 20), 35, 2)
+        pygame.draw.rect(screen, char["color"] if not locked else GRAY, body, border_radius=4)
+        pygame.draw.ellipse(screen, (235, 190, 150), (body.x + 8, body.y - 22, 28, 28))
 
     draw_text_in_rect(char["name"].upper(), pygame.Rect(rect.x + 10, rect.y + 112, rect.width - 20, 26), font, WHITE if not locked else GRAY, min_size=14)
     draw_text_in_rect(char["title"], pygame.Rect(rect.x + 10, rect.y + 140, rect.width - 20, 24), small_font, char["accent"] if not locked else GRAY, min_size=11)
