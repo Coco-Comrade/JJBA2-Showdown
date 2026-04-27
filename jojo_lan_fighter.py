@@ -122,6 +122,23 @@ CHARACTERS = {
 }
 CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim")
 
+SPRITE_ANIMATIONS = {
+    "joseph": {
+        "folder": "joseph8",
+        "idle": 4,
+        "walk": 4,
+        "jump": 1,
+        "block": 2,
+        "light": 3,
+        "medium": 3,
+        "heavy": 3,
+        "hit": 2,
+        "ko": 3,
+        "height": 152,
+    }
+}
+sprite_cache = {}
+
 DIFFICULTIES = {
     "easy": {
         "label": "Easy",
@@ -489,6 +506,7 @@ class Fighter:
         self.combo_text_timer = 0
         self.jump_buffer = 0
         self.coyote_timer = 0
+        self.last_dx = 0
 
     def reset(self, x, y, facing_right):
         self.rect.x = x
@@ -507,6 +525,7 @@ class Fighter:
         self.combo_text_timer = 0
         self.jump_buffer = 0
         self.coyote_timer = 0
+        self.last_dx = 0
 
     def face_opponent(self, opponent):
         if self.attacking or self.hit_stun > 0:
@@ -536,6 +555,7 @@ class Fighter:
                 dx -= self.speed
             if inp["right"]:
                 dx += self.speed
+        self.last_dx = dx
 
         can_jump = (self.on_ground or self.coyote_timer > 0) and not self.attacking
         if self.jump_buffer > 0 and can_jump:
@@ -658,6 +678,7 @@ class Fighter:
             "combo_text_timer": self.combo_text_timer,
             "character_key": self.character_key,
             "on_ground": self.on_ground,
+            "last_dx": self.last_dx,
         }
 
 
@@ -719,6 +740,19 @@ def draw_hp_bar(x, y, hp, name, accent):
 
 
 def draw_character_portrait(character_key, rect, flip=False):
+    sprite_data = SPRITE_ANIMATIONS.get(character_key)
+    if sprite_data:
+        path = os.path.join(BASE_DIR, "assets", "sprites", sprite_data["folder"], "idle", "0.png")
+        image = load_sprite_image(path)
+        if image:
+            image = pygame.transform.scale(image, (int(image.get_width() * rect.height / image.get_height()), rect.height))
+            if flip:
+                image = pygame.transform.flip(image, True, False)
+            crop = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            crop.blit(image, (rect.centerx - rect.x - image.get_width() // 2, 0))
+            screen.blit(crop, rect.topleft)
+            return
+
     char = CHARACTERS[character_key]
     pygame.draw.rect(screen, char["color"], rect.inflate(-16, -10), border_radius=4)
     pygame.draw.circle(screen, (235, 190, 150), rect.center, rect.height // 4)
@@ -793,6 +827,70 @@ def draw_aura(rect, color, facing_right, pulse):
     pygame.draw.circle(screen, color, (rect.centerx, rect.y + 80), radius + 10, 1)
 
 
+def load_sprite_image(path):
+    if path in sprite_cache:
+        return sprite_cache[path]
+    try:
+        image = pygame.image.load(path).convert_alpha()
+        bounds = image.get_bounding_rect()
+        if bounds.width > 0 and bounds.height > 0:
+            image = image.subsurface(bounds).copy()
+        sprite_cache[path] = image
+        return image
+    except Exception:
+        sprite_cache[path] = None
+        return None
+
+
+def sprite_animation_name(p):
+    if p["hp"] <= 0:
+        return "ko"
+    if p["hit_stun"] > 0 or p["hit_cooldown"] > 0:
+        return "hit"
+    if p["blocking"]:
+        return "block"
+    if p["attacking"] and p["attack_type"]:
+        return p["attack_type"]
+    if not p.get("on_ground", True):
+        return "jump"
+    if abs(p.get("last_dx", 0)) > 0:
+        return "walk"
+    return "idle"
+
+
+def draw_character_sprite(p, rect, facing_right):
+    sprite_data = SPRITE_ANIMATIONS.get(p.get("character_key"))
+    if not sprite_data:
+        return False
+
+    anim = sprite_animation_name(p)
+    frame_count = sprite_data.get(anim, sprite_data["idle"])
+    tick = pygame.time.get_ticks() // 110
+    frame_number = tick % frame_count
+    path = os.path.join(BASE_DIR, "assets", "sprites", sprite_data["folder"], anim, f"{frame_number}.png")
+    image = load_sprite_image(path)
+    if image is None:
+        return False
+
+    target_height = sprite_data.get("height", 152)
+    if anim == "ko":
+        target_height = int(target_height * 0.75)
+    scale = target_height / image.get_height()
+    target_size = (max(1, int(image.get_width() * scale)), target_height)
+    image = pygame.transform.scale(image, target_size)
+    if not facing_right:
+        image = pygame.transform.flip(image, True, False)
+
+    draw_x = rect.centerx - image.get_width() // 2
+    draw_y = rect.bottom - image.get_height() + 4
+    screen.blit(image, (draw_x, draw_y))
+
+    if p["blocking"]:
+        shield_x = rect.right + 10 if facing_right else rect.left - 32
+        pygame.draw.ellipse(screen, BLUE, (shield_x, rect.y + 20, 26, 100), 4)
+    return True
+
+
 def draw_fighter_from_state(p):
     char = CHARACTERS[p.get("character_key", "joseph")]
     rect = pygame.Rect(p["x"], p["y"], 80, 160)
@@ -800,6 +898,11 @@ def draw_fighter_from_state(p):
     pulse = pygame.time.get_ticks() // 80
 
     draw_aura(rect, char["aura"], facing_right, pulse)
+
+    if draw_character_sprite(p, rect, facing_right):
+        if p["combo_text_timer"] > 0:
+            draw_small("ORA!", rect.centerx - 18, rect.y - 62, char["accent"])
+        return
 
     body_color = char["color"]
     if p["hit_cooldown"] > 0:
@@ -1126,9 +1229,13 @@ def draw_character_card(character_key, rect, selected=False, locked=False):
     pygame.draw.rect(screen, char["accent"] if not locked else GRAY, rect, 3 if selected else 2, border_radius=4)
 
     body = pygame.Rect(rect.centerx - 22, rect.y + 32, 44, 72)
-    pygame.draw.circle(screen, char["aura"], (body.centerx, body.y + 20), 35, 2)
-    pygame.draw.rect(screen, char["color"] if not locked else GRAY, body, border_radius=4)
-    pygame.draw.ellipse(screen, (235, 190, 150), (body.x + 8, body.y - 22, 28, 28))
+    if character_key in SPRITE_ANIMATIONS and not locked:
+        preview = pygame.Rect(rect.centerx - 45, rect.y + 18, 90, 94)
+        draw_character_portrait(character_key, preview)
+    else:
+        pygame.draw.circle(screen, char["aura"], (body.centerx, body.y + 20), 35, 2)
+        pygame.draw.rect(screen, char["color"] if not locked else GRAY, body, border_radius=4)
+        pygame.draw.ellipse(screen, (235, 190, 150), (body.x + 8, body.y - 22, 28, 28))
 
     draw_text_in_rect(char["name"].upper(), pygame.Rect(rect.x + 10, rect.y + 112, rect.width - 20, 26), font, WHITE if not locked else GRAY, min_size=14)
     draw_text_in_rect(char["title"], pygame.Rect(rect.x + 10, rect.y + 140, rect.width - 20, 24), small_font, char["accent"] if not locked else GRAY, min_size=11)
