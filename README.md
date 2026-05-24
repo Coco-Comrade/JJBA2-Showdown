@@ -15,4 +15,9 @@ Optional local assets:
 - `intro.mp3`, `intro.ogg`, or `intro.wav` for menu music
 - `sweetie_fox.png` for the hidden easter egg image
 
-These assets are intentionally not committed by default.
+The character select screen uses the bundled
+`assets/music/character_select.wav` track.
+
+Runtime logs are written to `logs/jjba2_showdown.log`. Local music, easter egg
+images, downloaded music, logs, ZIPs, and PyCharm project files are ignored by
+Git by default.

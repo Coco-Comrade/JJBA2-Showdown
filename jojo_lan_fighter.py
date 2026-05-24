@@ -1,29 +1,51 @@
-import pygame
-import socket
-import threading
 import json
-import time
+import logging
 import os
 import random
+import socket
+import threading
+import time
 import urllib.parse
 import urllib.request
 
+import pygame
+
+mixer_init_error = None
 pygame.init()
 try:
     pygame.mixer.init()
     pygame.mixer.music.set_volume(0.5)
-except Exception:
-    pass
+except Exception as exc:
+    mixer_init_error = exc
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "jjba2_showdown.log")
 # Use a local filename like "intro.mp3", or a direct audio-file URL ending in
 # .mp3, .ogg, or .wav. Normal web pages/YouTube links will not play in Pygame.
 MUSIC_SOURCE = "intro.mp3"
+CHARACTER_SELECT_MUSIC_SOURCE = os.path.join(
+    "assets", "music", "character_select.wav"
+)
 SWEETIE_IMAGE_FILE = os.path.join(BASE_DIR, "sweetie_fox.png")
 music_error_printed = False
+current_music_file = None
 sweetie_image = None
 sweetie_popup_open = False
 prev_c_and_p = False
+
+os.makedirs(LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger("jjba2_showdown")
+if mixer_init_error:
+    logger.warning("Pygame mixer did not initialize: %s", mixer_init_error)
 
 # =========================
 # SETTINGS
@@ -242,11 +264,17 @@ def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("10.255.255.255", 1))
-        return s.getsockname()[0]
-    except Exception:
+        ip = s.getsockname()[0]
+        logger.info("Detected LAN IP: %s", ip)
+        return ip
+    except Exception as exc:
+        logger.debug("UDP LAN IP detection failed: %s", exc)
         try:
-            return socket.gethostbyname(socket.gethostname())
-        except Exception:
+            ip = socket.gethostbyname(socket.gethostname())
+            logger.info("Detected hostname IP: %s", ip)
+            return ip
+        except Exception as fallback_exc:
+            logger.warning("Falling back to localhost IP: %s", fallback_exc)
             return "127.0.0.1"
     finally:
         if s:
@@ -261,8 +289,8 @@ def send_json(sock, data):
 def tune_socket(sock):
     try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not set TCP_NODELAY: %s", exc)
 
 
 def recv_json(sock, buffer):
@@ -298,29 +326,46 @@ class LobbyServer:
         self.server_socket.listen(2)
         self.thread = threading.Thread(target=self.accept_loop, daemon=True)
         self.thread.start()
+        logger.info("Lobby server started on %s:%s", self.host, self.port)
 
     def accept_loop(self):
         while self.running:
             try:
                 conn, addr = self.server_socket.accept()
                 tune_socket(conn)
+                logger.info("Incoming lobby connection from %s:%s", *addr)
 
                 with self.lock:
                     if len(self.clients) >= 2:
                         send_json(conn, {"type": "full"})
                         conn.close()
+                        logger.info("Rejected connection because lobby is full")
                         continue
 
                     player_id = 0 if 0 not in self.clients else 1
                     self.clients[player_id] = conn
                     self.started = len(self.clients) == 2
+                    logger.info("Assigned client to player %s", player_id + 1)
 
-                send_json(conn, {"type": "welcome", "player_id": player_id, "selections": self.selections})
+                send_json(
+                    conn,
+                    {
+                        "type": "welcome",
+                        "player_id": player_id,
+                        "selections": self.selections,
+                    },
+                )
 
-                thread = threading.Thread(target=self.client_loop, args=(conn, player_id), daemon=True)
+                thread = threading.Thread(
+                    target=self.client_loop,
+                    args=(conn, player_id),
+                    daemon=True,
+                )
                 thread.start()
 
-            except Exception:
+            except Exception as exc:
+                if self.running:
+                    logger.exception("Server accept loop stopped unexpectedly: %s", exc)
                 break
 
     def client_loop(self, conn, player_id):
@@ -334,10 +379,26 @@ class LobbyServer:
                 elif data.get("type") == "select":
                     character_key = data.get("character")
                     with self.lock:
-                        taken = [value for pid, value in self.selections.items() if pid != player_id]
+                        taken = [
+                            value
+                            for pid, value in self.selections.items()
+                            if pid != player_id
+                        ]
                         if character_key in CHARACTERS and character_key not in taken:
                             self.selections[player_id] = character_key
-            except Exception:
+                            logger.info(
+                                "Player %s selected %s",
+                                player_id + 1,
+                                character_key,
+                            )
+                        else:
+                            logger.warning(
+                                "Rejected character selection from player %s: %s",
+                                player_id + 1,
+                                character_key,
+                            )
+            except Exception as exc:
+                logger.info("Player %s disconnected: %s", player_id + 1, exc)
                 with self.lock:
                     if player_id in self.clients:
                         del self.clients[player_id]
@@ -357,7 +418,8 @@ class LobbyServer:
         for pid, conn in client_items:
             try:
                 send_json(conn, {"type": "state", "state": state})
-            except Exception:
+            except Exception as exc:
+                logger.info("Dropping player %s after send failure: %s", pid + 1, exc)
                 dead.append(pid)
 
         if dead:
@@ -386,16 +448,17 @@ class LobbyServer:
 
     def stop(self):
         self.running = False
+        logger.info("Stopping lobby server")
         try:
             self.server_socket.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Server socket close failed: %s", exc)
         with self.lock:
             for conn in self.clients.values():
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Client socket close failed: %s", exc)
             self.clients.clear()
 
 
@@ -420,6 +483,7 @@ class GameClient:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tune_socket(self.sock)
         self.sock.settimeout(8)
+        logger.info("Connecting to lobby at %s:%s", host_ip, PORT)
         self.sock.connect((host_ip, PORT))
         self.sock.settimeout(None)
 
@@ -436,6 +500,7 @@ class GameClient:
         self.running = True
         self.receiver_thread = threading.Thread(target=self.receive_loop, daemon=True)
         self.receiver_thread.start()
+        logger.info("Connected as player %s", self.player_id + 1)
         return self.player_id
 
     def receive_loop(self):
@@ -445,9 +510,10 @@ class GameClient:
                 if data.get("type") == "state":
                     with self.lock:
                         self.latest_state = data["state"]
-            except Exception as e:
+            except Exception as exc:
                 if self.running:
-                    self.error = e
+                    self.error = exc
+                    logger.info("Client receive loop stopped: %s", exc)
                 self.running = False
                 break
 
@@ -462,6 +528,7 @@ class GameClient:
     def select_character(self, character_key):
         send_json(self.sock, {"type": "select", "character": character_key})
         self.selections[self.player_id] = character_key
+        logger.info("Sent character selection: %s", character_key)
 
     def get_state(self):
         with self.lock:
@@ -471,12 +538,12 @@ class GameClient:
         self.running = False
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Client socket shutdown skipped: %s", exc)
         try:
             self.sock.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Client socket close skipped: %s", exc)
 
 
 # =========================
@@ -637,8 +704,18 @@ class Fighter:
             return None
         data = ATTACKS[self.attack_type]
         if self.facing_right:
-            return pygame.Rect(self.rect.right, self.rect.y + data["y_offset"], data["range"], data["height"])
-        return pygame.Rect(self.rect.left - data["range"], self.rect.y + data["y_offset"], data["range"], data["height"])
+            return pygame.Rect(
+                self.rect.right,
+                self.rect.y + data["y_offset"],
+                data["range"],
+                data["height"],
+            )
+        return pygame.Rect(
+            self.rect.left - data["range"],
+            self.rect.y + data["y_offset"],
+            data["range"],
+            data["height"],
+        )
 
     def take_damage(self, amount, stun, knockback, attacker_on_left):
         if self.hit_cooldown > 0:
@@ -718,7 +795,15 @@ def draw_center(text, y, use_big=False, color=WHITE, max_width=None):
     screen.blit(img, (WIDTH // 2 - img.get_width() // 2, y))
 
 
-def draw_text_in_rect(text, rect, base_font=None, color=WHITE, align="center", bold=False, min_size=12):
+def draw_text_in_rect(
+    text,
+    rect,
+    base_font=None,
+    color=WHITE,
+    align="center",
+    bold=False,
+    min_size=12,
+):
     base_font = base_font or font
     img = render_fitted(text, base_font, color, rect.width, bold=bold, min_size=min_size)
     if align == "left":
@@ -745,7 +830,8 @@ def draw_character_portrait(character_key, rect, flip=False):
         path = os.path.join(BASE_DIR, "assets", "sprites", sprite_data["folder"], "idle", "0.png")
         image = load_sprite_image(path)
         if image:
-            image = pygame.transform.scale(image, (int(image.get_width() * rect.height / image.get_height()), rect.height))
+            image_width = int(image.get_width() * rect.height / image.get_height())
+            image = pygame.transform.scale(image, (image_width, rect.height))
             if flip:
                 image = pygame.transform.flip(image, True, False)
             crop = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
@@ -765,11 +851,43 @@ def draw_arcade_hud(state):
     c2 = CHARACTERS[p2.get("character_key", "caesar")]
 
     pygame.draw.rect(screen, (26, 21, 70), (0, 0, WIDTH, 104))
-    pygame.draw.rect(screen, (245, 202, 42), (12, 14, WIDTH - 24, 46), border_radius=3)
-    pygame.draw.rect(screen, (95, 55, 18), (18, 20, WIDTH - 36, 34), 3, border_radius=3)
-    pygame.draw.polygon(screen, (232, 190, 35), [(WIDTH // 2 - 72, 8), (WIDTH // 2 + 72, 8), (WIDTH // 2 + 48, 88), (WIDTH // 2 - 48, 88)])
-    pygame.draw.rect(screen, (18, 29, 88), (WIDTH // 2 - 32, 24, 64, 48), border_radius=4)
-    draw_text_in_rect("40", pygame.Rect(WIDTH // 2 - 26, 28, 52, 40), big_font, YELLOW, bold=True, min_size=24)
+    pygame.draw.rect(
+        screen,
+        (245, 202, 42),
+        (12, 14, WIDTH - 24, 46),
+        border_radius=3,
+    )
+    pygame.draw.rect(
+        screen,
+        (95, 55, 18),
+        (18, 20, WIDTH - 36, 34),
+        3,
+        border_radius=3,
+    )
+    pygame.draw.polygon(
+        screen,
+        (232, 190, 35),
+        [
+            (WIDTH // 2 - 72, 8),
+            (WIDTH // 2 + 72, 8),
+            (WIDTH // 2 + 48, 88),
+            (WIDTH // 2 - 48, 88),
+        ],
+    )
+    pygame.draw.rect(
+        screen,
+        (18, 29, 88),
+        (WIDTH // 2 - 32, 24, 64, 48),
+        border_radius=4,
+    )
+    draw_text_in_rect(
+        "40",
+        pygame.Rect(WIDTH // 2 - 26, 28, 52, 40),
+        big_font,
+        YELLOW,
+        bold=True,
+        min_size=24,
+    )
 
     draw_text("CHALLENGER", 72, 2, False, YELLOW, 250)
     right_label = font.render("CHALLENGER", True, YELLOW)
@@ -788,9 +906,27 @@ def draw_arcade_hud(state):
     right_bar = pygame.Rect(WIDTH - 494, 42, 382, 18)
     pygame.draw.rect(screen, (90, 23, 38), left_bar)
     pygame.draw.rect(screen, (90, 23, 38), right_bar)
-    pygame.draw.rect(screen, (74, 236, 120), (left_bar.x, left_bar.y, int(left_bar.width * p1["hp"] / 100), left_bar.height))
+    pygame.draw.rect(
+        screen,
+        (74, 236, 120),
+        (
+            left_bar.x,
+            left_bar.y,
+            int(left_bar.width * p1["hp"] / 100),
+            left_bar.height,
+        ),
+    )
     right_hp_width = int(right_bar.width * p2["hp"] / 100)
-    pygame.draw.rect(screen, (74, 236, 120), (right_bar.right - right_hp_width, right_bar.y, right_hp_width, right_bar.height))
+    pygame.draw.rect(
+        screen,
+        (74, 236, 120),
+        (
+            right_bar.right - right_hp_width,
+            right_bar.y,
+            right_hp_width,
+            right_bar.height,
+        ),
+    )
     pygame.draw.rect(screen, WHITE, left_bar, 2)
     pygame.draw.rect(screen, WHITE, right_bar, 2)
 
@@ -807,8 +943,18 @@ def draw_stage():
 
     for i in range(7):
         x = 100 + i * 190
-        pygame.draw.polygon(screen, (36, 32, 64), [(x, 220), (x + 70, 220), (x + 42, GROUND_Y)])
-        pygame.draw.line(screen, (85, 75, 110), (x, 220), (x + 42, GROUND_Y), 2)
+        pygame.draw.polygon(
+            screen,
+            (36, 32, 64),
+            [(x, 220), (x + 70, 220), (x + 42, GROUND_Y)],
+        )
+        pygame.draw.line(
+            screen,
+            (85, 75, 110),
+            (x, 220),
+            (x + 42, GROUND_Y),
+            2,
+        )
 
     pygame.draw.rect(screen, (95, 72, 50), (0, GROUND_Y - 40, WIDTH, 40))
     pygame.draw.rect(screen, (55, 36, 28), (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
@@ -837,7 +983,8 @@ def load_sprite_image(path):
             image = image.subsurface(bounds).copy()
         sprite_cache[path] = image
         return image
-    except Exception:
+    except Exception as exc:
+        logger.debug("Could not load sprite %s: %s", path, exc)
         sprite_cache[path] = None
         return None
 
@@ -867,7 +1014,14 @@ def draw_character_sprite(p, rect, facing_right):
     frame_count = sprite_data.get(anim, sprite_data["idle"])
     tick = pygame.time.get_ticks() // 110
     frame_number = tick % frame_count
-    path = os.path.join(BASE_DIR, "assets", "sprites", sprite_data["folder"], anim, f"{frame_number}.png")
+    path = os.path.join(
+        BASE_DIR,
+        "assets",
+        "sprites",
+        sprite_data["folder"],
+        anim,
+        f"{frame_number}.png",
+    )
     image = load_sprite_image(path)
     if image is None:
         return False
@@ -920,9 +1074,25 @@ def draw_fighter_from_state(p):
 
     scarf_y = rect.y + 35
     if facing_right:
-        pygame.draw.polygon(screen, char["accent"], [(rect.right - 4, scarf_y), (rect.right + 42, scarf_y + 12), (rect.right - 4, scarf_y + 24)])
+        pygame.draw.polygon(
+            screen,
+            char["accent"],
+            [
+                (rect.right - 4, scarf_y),
+                (rect.right + 42, scarf_y + 12),
+                (rect.right - 4, scarf_y + 24),
+            ],
+        )
     else:
-        pygame.draw.polygon(screen, char["accent"], [(rect.left + 4, scarf_y), (rect.left - 42, scarf_y + 12), (rect.left + 4, scarf_y + 24)])
+        pygame.draw.polygon(
+            screen,
+            char["accent"],
+            [
+                (rect.left + 4, scarf_y),
+                (rect.left - 42, scarf_y + 12),
+                (rect.left + 4, scarf_y + 24),
+            ],
+        )
 
     if p["blocking"]:
         shield_x = rect.right + 10 if facing_right else rect.left - 32
@@ -934,12 +1104,28 @@ def draw_fighter_from_state(p):
         data = ATTACKS.get(attack_type, ATTACKS["light"])
         atk_color = char["accent"] if phase == "active" else GRAY
         if facing_right:
-            atk = pygame.Rect(rect.right, rect.y + data["y_offset"], data["range"], data["height"])
+            atk = pygame.Rect(
+                rect.right,
+                rect.y + data["y_offset"],
+                data["range"],
+                data["height"],
+            )
         else:
-            atk = pygame.Rect(rect.left - data["range"], rect.y + data["y_offset"], data["range"], data["height"])
+            atk = pygame.Rect(
+                rect.left - data["range"],
+                rect.y + data["y_offset"],
+                data["range"],
+                data["height"],
+            )
         pygame.draw.rect(screen, atk_color, atk, 3, border_radius=4)
         if phase == "active":
-            pygame.draw.circle(screen, atk_color, atk.center, max(16, data["height"] // 2), 2)
+            pygame.draw.circle(
+                screen,
+                atk_color,
+                atk.center,
+                max(16, data["height"] // 2),
+                2,
+            )
 
     if p["combo_text_timer"] > 0:
         draw_small("ORA!", rect.centerx - 18, rect.y - 62, char["accent"])
@@ -984,7 +1170,8 @@ def load_sweetie_image():
     try:
         img = pygame.image.load(SWEETIE_IMAGE_FILE).convert()
         sweetie_image = pygame.transform.smoothscale(img, (675, 360))
-    except Exception:
+    except Exception as exc:
+        logger.debug("Sweetie image unavailable: %s", exc)
         sweetie_image = None
     return sweetie_image
 
@@ -998,53 +1185,80 @@ def handle_secret_image_toggle():
     prev_c_and_p = c_and_p
 
 
-def play_menu_music():
-    global music_error_printed
+def play_music(source, volume=0.5):
+    global current_music_file, music_error_printed
     try:
         if not pygame.mixer.get_init():
             pygame.mixer.init()
-            pygame.mixer.music.set_volume(0.5)
-        music_file = get_music_file()
+            pygame.mixer.music.set_volume(volume)
+        music_file = get_music_file(source)
         if not music_file:
             return
         if not os.path.exists(music_file):
             if not music_error_printed:
-                print(f"Music file not found: {music_file}")
+                logger.warning("Music file not found: %s", music_file)
                 music_error_printed = True
             return
-        if not pygame.mixer.music.get_busy():
+        if current_music_file != music_file:
+            pygame.mixer.music.stop()
             pygame.mixer.music.load(music_file)
-            pygame.mixer.music.set_volume(0.5)
+            pygame.mixer.music.set_volume(volume)
             pygame.mixer.music.play(-1)
-    except Exception as e:
+            current_music_file = music_file
+            logger.info("Playing music: %s", music_file)
+        elif not pygame.mixer.music.get_busy():
+            pygame.mixer.music.play(-1)
+            logger.info("Restarted music loop: %s", music_file)
+    except Exception as exc:
         if not music_error_printed:
-            print(f"Could not play music: {e}")
-            print("Try converting the soundtrack to .ogg or .wav if this Pygame build cannot play MP3 files.")
+            logger.warning("Could not play music: %s", exc)
+            logger.warning(
+                "Try converting the soundtrack to .ogg or .wav if this "
+                "Pygame build cannot play MP3 files."
+            )
             music_error_printed = True
 
 
+def play_menu_music():
+    play_music(MUSIC_SOURCE, 0.5)
+
+
+def play_character_select_music():
+    play_music(CHARACTER_SELECT_MUSIC_SOURCE, 0.55)
+
+
 def stop_menu_music():
+    global current_music_file
     try:
         if pygame.mixer.get_init() and pygame.mixer.music.get_busy():
             pygame.mixer.music.stop()
-    except Exception:
-        pass
+            logger.info("Stopped menu music")
+        current_music_file = None
+    except Exception as exc:
+        logger.debug("Music stop skipped: %s", exc)
 
 
-def get_music_file():
+def get_music_file(source):
     global music_error_printed
-    source = MUSIC_SOURCE.strip()
+    source = source.strip()
     parsed = urllib.parse.urlparse(source)
     is_url = parsed.scheme in ("http", "https")
 
     if not is_url:
-        return source if os.path.isabs(source) else os.path.join(BASE_DIR, source)
+        if os.path.isabs(source):
+            return source
+        return os.path.join(BASE_DIR, source)
 
     ext = os.path.splitext(parsed.path)[1].lower()
     if ext not in (".mp3", ".ogg", ".wav"):
         if not music_error_printed:
-            print("Music URL must point directly to an .mp3, .ogg, or .wav file.")
-            print("A YouTube, Spotify, or normal webpage link will not work in Pygame.")
+            logger.warning(
+                "Music URL must point directly to an .mp3, .ogg, or .wav file."
+            )
+            logger.warning(
+                "A YouTube, Spotify, or normal webpage link will not work in "
+                "Pygame."
+            )
             music_error_printed = True
         return None
 
@@ -1052,8 +1266,7 @@ def get_music_file():
     if os.path.exists(cached_file):
         return cached_file
 
-    if not music_error_printed:
-        print("Downloading music file...")
+    logger.info("Downloading music file: %s", source)
     urllib.request.urlretrieve(source, cached_file)
     return cached_file
 
@@ -1061,7 +1274,13 @@ def get_music_file():
 def draw_gold_frame(rect, thickness=3):
     pygame.draw.rect(screen, BLACK, rect, border_radius=3)
     pygame.draw.rect(screen, (205, 150, 25), rect, thickness, border_radius=3)
-    pygame.draw.rect(screen, (70, 45, 15), rect.inflate(-10, -10), 1, border_radius=3)
+    pygame.draw.rect(
+        screen,
+        (70, 45, 15),
+        rect.inflate(-10, -10),
+        1,
+        border_radius=3,
+    )
 
     for sx, sy in [
         (rect.left, rect.top),
@@ -1069,15 +1288,33 @@ def draw_gold_frame(rect, thickness=3):
         (rect.left, rect.bottom - 18),
         (rect.right - 18, rect.bottom - 18),
     ]:
-        pygame.draw.line(screen, YELLOW, (sx + 3, sy + 3), (sx + 15, sy + 3), 2)
-        pygame.draw.line(screen, YELLOW, (sx + 3, sy + 3), (sx + 3, sy + 15), 2)
+        pygame.draw.line(
+            screen,
+            YELLOW,
+            (sx + 3, sy + 3),
+            (sx + 15, sy + 3),
+            2,
+        )
+        pygame.draw.line(
+            screen,
+            YELLOW,
+            (sx + 3, sy + 3),
+            (sx + 3, sy + 15),
+            2,
+        )
 
 
 def draw_menu_background():
     screen.fill((5, 3, 9))
 
     for i in range(0, WIDTH, 34):
-        pygame.draw.line(screen, (32, 7, 45), (i, 0), (WIDTH - i // 2, HEIGHT), 1)
+        pygame.draw.line(
+            screen,
+            (32, 7, 45),
+            (i, 0),
+            (WIDTH - i // 2, HEIGHT),
+            1,
+        )
     for i in range(0, WIDTH, 70):
         pygame.draw.line(screen, (55, 10, 75), (i, HEIGHT), (WIDTH - i, 0), 2)
 
@@ -1095,8 +1332,20 @@ def draw_menu_background():
 
 def draw_menu_button(text, rect, selected):
     if selected:
-        pygame.draw.rect(screen, (255, 200, 30), rect.inflate(14, 14), 3, border_radius=4)
-        pygame.draw.rect(screen, (95, 52, 8), rect.inflate(8, 8), 2, border_radius=4)
+        pygame.draw.rect(
+            screen,
+            (255, 200, 30),
+            rect.inflate(14, 14),
+            3,
+            border_radius=4,
+        )
+        pygame.draw.rect(
+            screen,
+            (95, 52, 8),
+            rect.inflate(8, 8),
+            2,
+            border_radius=4,
+        )
 
     draw_gold_frame(rect, 3)
     inner = rect.inflate(-10, -10)
@@ -1107,19 +1356,35 @@ def draw_menu_button(text, rect, selected):
         pygame.draw.polygon(
             screen,
             YELLOW,
-            [(rect.left + 18, rect.centery), (rect.left + 31, rect.centery - 10), (rect.left + 31, rect.centery + 10)],
+            [
+                (rect.left + 18, rect.centery),
+                (rect.left + 31, rect.centery - 10),
+                (rect.left + 31, rect.centery + 10),
+            ],
         )
 
     label_rect = rect.inflate(-54 if selected else -28, -14)
     if selected:
         label_rect.x += 18
-    draw_text_in_rect(text.upper(), label_rect, font, WHITE if selected else (175, 170, 185), min_size=15)
+    draw_text_in_rect(
+        text.upper(),
+        label_rect,
+        font,
+        WHITE if selected else (175, 170, 185),
+        min_size=15,
+    )
 
 
 def draw_video_panel(x, y, w, h, title="SWEETIE FOX", show_close=False):
     panel = pygame.Rect(x, y, w, h)
     draw_gold_frame(panel, 3)
-    draw_text_in_rect(title, pygame.Rect(x + 45, y + 8, w - 90, 34), font, WHITE, min_size=14)
+    draw_text_in_rect(
+        title,
+        pygame.Rect(x + 45, y + 8, w - 90, 34),
+        font,
+        WHITE,
+        min_size=14,
+    )
 
     if show_close:
         close = pygame.Rect(panel.right - 36, panel.top + 8, 26, 26)
@@ -1130,7 +1395,10 @@ def draw_video_panel(x, y, w, h, title="SWEETIE FOX", show_close=False):
     img = load_sweetie_image()
     image_rect = pygame.Rect(x + 5, y + 55, w - 10, h - 115)
     if img:
-        fitted = pygame.transform.smoothscale(img, (image_rect.width, image_rect.height))
+        fitted = pygame.transform.smoothscale(
+            img,
+            (image_rect.width, image_rect.height),
+        )
         screen.blit(fitted, image_rect.topleft)
     else:
         pygame.draw.rect(screen, (28, 12, 40), image_rect)
@@ -1138,7 +1406,13 @@ def draw_video_panel(x, y, w, h, title="SWEETIE FOX", show_close=False):
         draw_center("Put the image in your game folder", y + 215, False, WHITE, w - 40)
 
     pygame.draw.rect(screen, BLACK, (x + 5, y + h - 58, w - 10, 53))
-    draw_small("SBR EP 2 Gyro Teaches Johnny How To Roll Balls", x + 20, y + h - 47, WHITE, w - 115)
+    draw_small(
+        "SBR EP 2 Gyro Teaches Johnny How To Roll Balls",
+        x + 20,
+        y + h - 47,
+        WHITE,
+        w - 115,
+    )
     draw_small("(Cosplay Sweetie Fox)", x + 20, y + h - 22, WHITE, w - 115)
     draw_small("20:08", x + w - 75, y + h - 35, WHITE)
 
@@ -1153,18 +1427,42 @@ def draw_secret_image_popup():
 def draw_showdown_preview(x, y, w, h):
     panel = pygame.Rect(x, y, w, h)
     draw_gold_frame(panel, 3)
-    draw_text_in_rect("BATTLE TENDENCY", pygame.Rect(x + 20, y + 8, w - 40, 38), font, WHITE, min_size=15)
+    draw_text_in_rect(
+        "BATTLE TENDENCY",
+        pygame.Rect(x + 20, y + 8, w - 40, 38),
+        font,
+        WHITE,
+        min_size=15,
+    )
 
     arena = pygame.Rect(x + 16, y + 58, w - 32, h - 86)
     pygame.draw.rect(screen, (16, 12, 30), arena)
     pygame.draw.rect(screen, (65, 42, 75), arena, 2)
     pygame.draw.circle(screen, (238, 208, 82), (arena.centerx, arena.y + 55), 42)
-    pygame.draw.rect(screen, (82, 55, 35), (arena.x, arena.bottom - 62, arena.width, 62))
-    pygame.draw.line(screen, YELLOW, (arena.x, arena.bottom - 62), (arena.right, arena.bottom - 62), 3)
+    pygame.draw.rect(
+        screen,
+        (82, 55, 35),
+        (arena.x, arena.bottom - 62, arena.width, 62),
+    )
+    pygame.draw.line(
+        screen,
+        YELLOW,
+        (arena.x, arena.bottom - 62),
+        (arena.right, arena.bottom - 62),
+        3,
+    )
 
     for i in range(5):
         pillar_x = arena.x + 42 + i * 105
-        pygame.draw.polygon(screen, (42, 35, 65), [(pillar_x, arena.y + 95), (pillar_x + 42, arena.y + 95), (pillar_x + 25, arena.bottom - 62)])
+        pygame.draw.polygon(
+            screen,
+            (42, 35, 65),
+            [
+                (pillar_x, arena.y + 95),
+                (pillar_x + 42, arena.y + 95),
+                (pillar_x + 25, arena.bottom - 62),
+            ],
+        )
 
     joseph = pygame.Rect(arena.x + 115, arena.bottom - 182, 70, 120)
     caesar = pygame.Rect(arena.right - 185, arena.bottom - 182, 70, 120)
@@ -1172,10 +1470,34 @@ def draw_showdown_preview(x, y, w, h):
     pygame.draw.circle(screen, YELLOW, (caesar.centerx, caesar.y + 35), 42, 2)
     pygame.draw.rect(screen, RED, joseph, border_radius=4)
     pygame.draw.rect(screen, GREEN, caesar, border_radius=4)
-    pygame.draw.ellipse(screen, (235, 190, 150), (joseph.x + 16, joseph.y - 24, 38, 38))
-    pygame.draw.ellipse(screen, (235, 190, 150), (caesar.x + 16, caesar.y - 24, 38, 38))
-    pygame.draw.polygon(screen, CYAN, [(joseph.right - 3, joseph.y + 30), (joseph.right + 36, joseph.y + 42), (joseph.right - 3, joseph.y + 54)])
-    pygame.draw.polygon(screen, YELLOW, [(caesar.left + 3, caesar.y + 30), (caesar.left - 36, caesar.y + 42), (caesar.left + 3, caesar.y + 54)])
+    pygame.draw.ellipse(
+        screen,
+        (235, 190, 150),
+        (joseph.x + 16, joseph.y - 24, 38, 38),
+    )
+    pygame.draw.ellipse(
+        screen,
+        (235, 190, 150),
+        (caesar.x + 16, caesar.y - 24, 38, 38),
+    )
+    pygame.draw.polygon(
+        screen,
+        CYAN,
+        [
+            (joseph.right - 3, joseph.y + 30),
+            (joseph.right + 36, joseph.y + 42),
+            (joseph.right - 3, joseph.y + 54),
+        ],
+    )
+    pygame.draw.polygon(
+        screen,
+        YELLOW,
+        [
+            (caesar.left + 3, caesar.y + 30),
+            (caesar.left - 36, caesar.y + 42),
+            (caesar.left + 3, caesar.y + 54),
+        ],
+    )
 
     versus = big_font.render("VS", True, PINK)
     screen.blit(versus, (arena.centerx - versus.get_width() // 2, arena.centery - 35))
@@ -1186,18 +1508,67 @@ def draw_showdown_preview(x, y, w, h):
 def draw_lobby_side_panel(players=1):
     panel = pygame.Rect(960, 25, 295, 445)
     draw_gold_frame(panel, 3)
-    draw_text("LOBBY", 990, 48, False, YELLOW, 240)
+    draw_text_in_rect(
+        "LOBBY",
+        pygame.Rect(990, 42, 235, 42),
+        font,
+        YELLOW,
+        align="left",
+        min_size=16,
+    )
     pygame.draw.line(screen, (185, 130, 25), (990, 95), (1228, 95), 2)
-    draw_small("STATUS: WAITING...", 990, 120, WHITE, 240)
-    draw_small(f"PLAYERS: {players} / 2", 990, 155, WHITE, 240)
-    draw_small("HOST: YOU", 990, 190, WHITE, 240)
-    draw_small(f"PORT: {PORT}", 990, 225, WHITE, 240)
+    draw_text_in_rect(
+        "STATUS: WAITING",
+        pygame.Rect(990, 112, 238, 28),
+        small_font,
+        WHITE,
+        align="left",
+        min_size=11,
+    )
+    draw_text_in_rect(
+        f"PLAYERS: {players} / 2",
+        pygame.Rect(990, 147, 238, 28),
+        small_font,
+        WHITE,
+        align="left",
+        min_size=11,
+    )
+    draw_text_in_rect(
+        "HOST: YOU",
+        pygame.Rect(990, 182, 238, 28),
+        small_font,
+        WHITE,
+        align="left",
+        min_size=11,
+    )
+    draw_text_in_rect(
+        f"PORT: {PORT}",
+        pygame.Rect(990, 217, 238, 28),
+        small_font,
+        WHITE,
+        align="left",
+        min_size=11,
+    )
 
     p1 = pygame.Rect(980, 262, 255, 90)
     pygame.draw.rect(screen, (70, 10, 13), p1, border_radius=3)
     pygame.draw.rect(screen, RED, p1, 2, border_radius=3)
-    draw_text("PLAYER 1", 995, 282, False, RED, 150)
-    draw_small("YOU", 995, 326, WHITE, 150)
+    draw_text_in_rect(
+        "PLAYER 1",
+        pygame.Rect(995, 278, 150, 32),
+        font,
+        RED,
+        align="left",
+        min_size=14,
+    )
+    draw_text_in_rect(
+        "YOU",
+        pygame.Rect(995, 322, 150, 24),
+        small_font,
+        WHITE,
+        align="left",
+        min_size=11,
+    )
     pygame.draw.rect(screen, RED, (1170, 292, 32, 48), border_radius=4)
     pygame.draw.circle(screen, (235, 190, 150), (1186, 284), 15)
 
@@ -1205,19 +1576,22 @@ def draw_lobby_side_panel(players=1):
     p2_color = GREEN if players >= 2 else GRAY
     pygame.draw.rect(screen, (18, 18, 24), p2, border_radius=3)
     pygame.draw.rect(screen, p2_color, p2, 2, border_radius=3)
-    draw_text("PLAYER 2", 995, 388, False, p2_color, 165)
-    draw_small("READY" if players >= 2 else "WAITING...", 995, 426, BLUE, 165)
-
-    controls = pygame.Rect(960, 488, 295, 207)
-    draw_gold_frame(controls, 3)
-    draw_small("CONTROLS", 990, 510, CYAN, 240)
-    draw_small("MOVE: A/D OR ARROWS", 990, 540, WHITE, 240)
-    draw_small("JUMP: W / UP / SPACE", 990, 564, WHITE, 240)
-    draw_small("BLOCK: S / DOWN / SHIFT", 990, 588, WHITE, 240)
-    draw_small("LIGHT: J OR U", 990, 612, WHITE, 240)
-    draw_small("MEDIUM: K OR I", 990, 636, WHITE, 240)
-    draw_small("HEAVY: L OR O", 990, 660, WHITE, 240)
-    draw_small("MENU: ESC", 990, 684, WHITE, 240)
+    draw_text_in_rect(
+        "PLAYER 2",
+        pygame.Rect(995, 384, 165, 30),
+        font,
+        p2_color,
+        align="left",
+        min_size=14,
+    )
+    draw_text_in_rect(
+        "READY" if players >= 2 else "WAITING",
+        pygame.Rect(995, 420, 165, 24),
+        small_font,
+        BLUE,
+        align="left",
+        min_size=11,
+    )
 
 
 def draw_character_card(character_key, rect, selected=False, locked=False):
@@ -1226,7 +1600,13 @@ def draw_character_card(character_key, rect, selected=False, locked=False):
     if locked:
         fill = (24, 24, 30)
     pygame.draw.rect(screen, fill, rect, border_radius=4)
-    pygame.draw.rect(screen, char["accent"] if not locked else GRAY, rect, 3 if selected else 2, border_radius=4)
+    pygame.draw.rect(
+        screen,
+        char["accent"] if not locked else GRAY,
+        rect,
+        3 if selected else 2,
+        border_radius=4,
+    )
 
     body = pygame.Rect(rect.centerx - 22, rect.y + 32, 44, 72)
     if character_key in SPRITE_ANIMATIONS and not locked:
@@ -1234,16 +1614,44 @@ def draw_character_card(character_key, rect, selected=False, locked=False):
         draw_character_portrait(character_key, preview)
     else:
         pygame.draw.circle(screen, char["aura"], (body.centerx, body.y + 20), 35, 2)
-        pygame.draw.rect(screen, char["color"] if not locked else GRAY, body, border_radius=4)
-        pygame.draw.ellipse(screen, (235, 190, 150), (body.x + 8, body.y - 22, 28, 28))
+        pygame.draw.rect(
+            screen,
+            char["color"] if not locked else GRAY,
+            body,
+            border_radius=4,
+        )
+        pygame.draw.ellipse(
+            screen,
+            (235, 190, 150),
+            (body.x + 8, body.y - 22, 28, 28),
+        )
 
-    draw_text_in_rect(char["name"].upper(), pygame.Rect(rect.x + 10, rect.y + 112, rect.width - 20, 26), font, WHITE if not locked else GRAY, min_size=14)
-    draw_text_in_rect(char["title"], pygame.Rect(rect.x + 10, rect.y + 140, rect.width - 20, 24), small_font, char["accent"] if not locked else GRAY, min_size=11)
+    draw_text_in_rect(
+        char["name"].upper(),
+        pygame.Rect(rect.x + 10, rect.y + 112, rect.width - 20, 26),
+        font,
+        WHITE if not locked else GRAY,
+        min_size=14,
+    )
+    draw_text_in_rect(
+        char["title"],
+        pygame.Rect(rect.x + 10, rect.y + 140, rect.width - 20, 24),
+        small_font,
+        char["accent"] if not locked else GRAY,
+        min_size=11,
+    )
     if locked:
-        draw_text_in_rect("TAKEN", pygame.Rect(rect.x + 10, rect.y + 8, rect.width - 20, 24), small_font, RED, min_size=12)
+        draw_text_in_rect(
+            "TAKEN",
+            pygame.Rect(rect.x + 10, rect.y + 8, rect.width - 20, 24),
+            small_font,
+            RED,
+            min_size=12,
+        )
 
 
 def character_select_screen(title, unavailable=None):
+    play_character_select_music()
     unavailable = set(unavailable or [])
     available = [key for key in CHARACTER_ORDER if key not in unavailable]
     selected = 0
@@ -1285,6 +1693,7 @@ def character_select_screen(title, unavailable=None):
 
 
 def difficulty_select_screen():
+    play_menu_music()
     selected = 1
 
     while True:
@@ -1499,6 +1908,7 @@ def make_ai_input(ai, player, frame_count, difficulty_key="hard"):
 
 def run_game_server(server):
     p1_key, p2_key = server.get_characters()
+    logger.info("Starting LAN match: %s vs %s", p1_key, p2_key)
     p1 = Fighter(200, 300, p1_key, True)
     p2 = Fighter(900, 300, p2_key, False)
     winner = None
@@ -1520,10 +1930,12 @@ def run_game_server(server):
         inputs = server.get_inputs()
 
         if inputs[0].get("menu") or inputs[1].get("menu"):
+            logger.info("LAN match ended by menu input")
             return "menu"
 
         if server.player_count() < 2:
             server.broadcast_state(make_state(p1, p2, winner, disconnected=True))
+            logger.info("LAN match ended because a player disconnected")
             return "menu"
 
         winner = step_fight(p1, p2, inputs[0], inputs[1], winner)
@@ -1544,6 +1956,12 @@ def run_singleplayer_game():
     if not difficulty_key:
         return "menu"
     ai_key = random.choice([key for key in CHARACTER_ORDER if key != player_key])
+    logger.info(
+        "Starting singleplayer match: %s vs %s on %s",
+        player_key,
+        ai_key,
+        difficulty_key,
+    )
     stop_menu_music()
     round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"])
     player = Fighter(200, 300, player_key, True)
@@ -1563,6 +1981,7 @@ def run_singleplayer_game():
         player_input = get_local_input()
 
         if player_input["menu"]:
+            logger.info("Singleplayer match exited to menu")
             return "menu"
 
         ai_input = make_ai_input(ai, player, frame_count, difficulty_key)
@@ -1590,6 +2009,7 @@ def run_singleplayer_game():
 # CLIENT LOOP
 # =========================
 def run_client_game(client):
+    logger.info("Starting client game loop")
     last_state_time = time.time()
     while True:
         clock.tick(FPS)
@@ -1604,8 +2024,12 @@ def run_client_game(client):
 
         try:
             client.send_input(inp)
-        except Exception as e:
-            message_screen("CONNECTION LOST", [str(e), "Press Enter to return to the menu"])
+        except Exception as exc:
+            logger.warning("Could not send input: %s", exc)
+            message_screen(
+                "CONNECTION LOST",
+                [str(exc), "Press Enter to return to the menu"],
+            )
             wait_for_enter()
             return "menu"
 
@@ -1622,7 +2046,10 @@ def run_client_game(client):
             if state and state.get("disconnected"):
                 draw_center("Press Esc to return to the menu", 390, False, WHITE)
             else:
-                message_screen("CONNECTION LOST", [str(client.error), "Press Enter to return to the menu"])
+                message_screen(
+                    "CONNECTION LOST",
+                    [str(client.error), "Press Enter to return to the menu"],
+                )
                 wait_for_enter()
                 return "menu"
 
@@ -1632,6 +2059,7 @@ def run_client_game(client):
         pygame.display.flip()
 
         if inp["menu"]:
+            logger.info("Client game loop exited to menu")
             return "menu"
 
 
@@ -1788,12 +2216,22 @@ def create_lobby_flow():
     host_character = character_select_screen("PLAYER 1 SELECT")
     if not host_character:
         return
+    play_menu_music()
+    logger.info("Creating lobby as %s", host_character)
 
     server = LobbyServer(host_character)
     try:
         server.start()
-    except Exception as e:
-        message_screen("SERVER ERROR", [str(e), "Maybe port 5555 is already being used.", "Press ENTER"])
+    except Exception as exc:
+        logger.exception("Could not start lobby server")
+        message_screen(
+            "SERVER ERROR",
+            [
+                str(exc),
+                "Maybe port 5555 is already being used.",
+                "Press ENTER",
+            ],
+        )
         wait_for_enter()
         return
 
@@ -1802,9 +2240,10 @@ def create_lobby_flow():
 
     try:
         client.connect("127.0.0.1")
-    except Exception as e:
+    except Exception as exc:
+        logger.exception("Host client could not connect to local server")
         server.stop()
-        message_screen("HOST ERROR", [str(e), "Press ENTER"])
+        message_screen("HOST ERROR", [str(exc), "Press ENTER"])
         wait_for_enter()
         return
 
@@ -1817,6 +2256,7 @@ def create_lobby_flow():
                 pygame.quit()
                 quit()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                logger.info("Host cancelled lobby")
                 server.stop()
                 client.close()
                 return
@@ -1859,8 +2299,16 @@ def join_lobby_flow():
     try:
         message_screen("CONNECTING", [f"Trying {host_ip}:{PORT}..."])
         client.connect(host_ip)
-    except Exception as e:
-        message_screen("JOIN FAILED", [str(e), "Make sure both devices are on the same Wi-Fi network.", "Press Enter"])
+    except Exception as exc:
+        logger.exception("Could not join lobby at %s", host_ip)
+        message_screen(
+            "JOIN FAILED",
+            [
+                str(exc),
+                "Make sure both devices are on the same Wi-Fi network.",
+                "Press Enter",
+            ],
+        )
         wait_for_enter()
         return
 
@@ -1869,10 +2317,12 @@ def join_lobby_flow():
     if not character_key:
         client.close()
         return
+    play_menu_music()
     try:
         client.select_character(character_key)
-    except Exception as e:
-        message_screen("SELECT FAILED", [str(e), "Press Enter"])
+    except Exception as exc:
+        logger.exception("Could not send character selection")
+        message_screen("SELECT FAILED", [str(exc), "Press Enter"])
         wait_for_enter()
         client.close()
         return
@@ -1886,6 +2336,7 @@ def join_lobby_flow():
 # MAIN
 # =========================
 def main():
+    logger.info("JJBA2 The Showdown started")
     intro_screen()
     while True:
         choice = lobby_menu()
