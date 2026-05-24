@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import socket
+import struct
 import threading
 import time
 import urllib.parse
@@ -57,6 +58,8 @@ NET_FPS = 30
 GRAVITY = 1
 GROUND_Y = 580
 PORT = 5555
+MESSAGE_HEADER_BYTES = 4
+MAX_MESSAGE_BYTES = 1_000_000
 JUMP_BUFFER_FRAMES = 7
 COYOTE_FRAMES = 6
 
@@ -282,8 +285,9 @@ def get_local_ip():
 
 
 def send_json(sock, data):
-    message = json.dumps(data) + "\n"
-    sock.sendall(message.encode())
+    payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    header = struct.pack("!I", len(payload))
+    sock.sendall(header + payload)
 
 
 def tune_socket(sock):
@@ -293,15 +297,24 @@ def tune_socket(sock):
         logger.debug("Could not set TCP_NODELAY: %s", exc)
 
 
-def recv_json(sock, buffer):
-    while "\n" not in buffer:
-        chunk = sock.recv(4096).decode()
+def recv_exact(sock, byte_count):
+    data = b""
+    while len(data) < byte_count:
+        chunk = sock.recv(byte_count - len(data))
         if not chunk:
             raise ConnectionError("Disconnected")
-        buffer += chunk
+        data += chunk
+    return data
 
-    line, buffer = buffer.split("\n", 1)
-    return json.loads(line), buffer
+
+def recv_json(sock):
+    header = recv_exact(sock, MESSAGE_HEADER_BYTES)
+    message_length = struct.unpack("!I", header)[0]
+    if message_length > MAX_MESSAGE_BYTES:
+        raise ConnectionError(f"Message too large: {message_length} bytes")
+
+    payload = recv_exact(sock, message_length)
+    return json.loads(payload.decode("utf-8"))
 
 
 # =========================
@@ -369,10 +382,9 @@ class LobbyServer:
                 break
 
     def client_loop(self, conn, player_id):
-        buffer = ""
         while self.running:
             try:
-                data, buffer = recv_json(conn, buffer)
+                data = recv_json(conn)
                 if data.get("type") == "input":
                     with self.lock:
                         self.inputs[player_id] = data["input"]
@@ -468,7 +480,6 @@ class LobbyServer:
 class GameClient:
     def __init__(self):
         self.sock = None
-        self.buffer = ""
         self.player_id = None
         self.latest_state = None
         self.error = None
@@ -487,7 +498,7 @@ class GameClient:
         self.sock.connect((host_ip, PORT))
         self.sock.settimeout(None)
 
-        data, self.buffer = recv_json(self.sock, self.buffer)
+        data = recv_json(self.sock)
         if data.get("type") == "full":
             raise ConnectionError("Lobby is full")
         if data.get("type") != "welcome" or "player_id" not in data:
@@ -506,7 +517,7 @@ class GameClient:
     def receive_loop(self):
         while self.running:
             try:
-                data, self.buffer = recv_json(self.sock, self.buffer)
+                data = recv_json(self.sock)
                 if data.get("type") == "state":
                     with self.lock:
                         self.latest_state = data["state"]

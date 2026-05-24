@@ -10,6 +10,14 @@ Install Pygame, then run:
 python jojo_lan_fighter.py
 ```
 
+## LAN Protocol
+
+LAN messages are sent over TCP as a 4-byte big-endian payload length followed
+by a UTF-8 JSON payload. The receiver reads exactly the 4-byte header first,
+then exactly the announced payload length. Clients send character selections
+and input snapshots; the host server sends lobby responses and authoritative
+match state snapshots.
+
 Optional local assets:
 
 - `intro.mp3`, `intro.ogg`, or `intro.wav` for menu music
