@@ -18,6 +18,7 @@ class GameClient:
         self.last_sent_input = None
         self.last_input_send_time = 0
         self.selections = {0: None, 1: None}
+        self.player_names = {"0": "PLAYER 1", "1": "PLAYER 2"}
 
     def connect(self, host_ip):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -37,6 +38,9 @@ class GameClient:
         self.selections = {
             int(pid): value for pid, value in data.get("selections", {}).items()
         }
+        self.player_names = {
+            str(pid): value for pid, value in data.get("player_names", {}).items()
+        } or self.player_names
         self.running = True
         self.receiver_thread = threading.Thread(target=self.receive_loop, daemon=True)
         self.receiver_thread.start()

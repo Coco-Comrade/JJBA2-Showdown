@@ -38,8 +38,9 @@ match state snapshots.
 Set `OPENAI_API_KEY` before launching the game to let OpenAI generate short
 JoJo-themed display names for Player 1 and Player 2. The game uses
 `gpt-5-mini` by default; set `OPENAI_NAME_MODEL` to use a different compatible
-Responses API model. If the key or network is unavailable, the game falls back
-to local JoJo-themed names so matches still start normally.
+Responses API model. LAN names are generated when the host creates a lobby, so
+they can appear before the fight starts. If the key or network is unavailable,
+the game falls back to local JoJo-themed names so matches still start normally.
 
 Optional local assets:
 

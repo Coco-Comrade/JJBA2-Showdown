@@ -123,7 +123,7 @@ def make_ai_input(ai, player, frame_count, difficulty_key="hard"):
 
 def run_game_server(server):
     p1_key, p2_key = server.get_characters()
-    player_names = generate_ai_player_names()
+    player_names = server.get_player_names()
     logger.info("Starting LAN match: %s vs %s", p1_key, p2_key)
     p1 = Fighter(200, 300, p1_key, True)
     p2 = Fighter(900, 300, p2_key, False)

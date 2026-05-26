@@ -2,6 +2,7 @@ import threading
 
 import pygame
 
+from .ai_names import generate_ai_player_names
 from .client import GameClient
 from .config import *
 from .data import *
@@ -98,9 +99,15 @@ def create_lobby_flow():
     if not host_character:
         return
     play_menu_music()
-    logger.info("Creating lobby as %s", host_character)
+    player_names = generate_ai_player_names()
+    logger.info(
+        "Creating lobby as %s with AI names %s vs %s",
+        host_character,
+        player_names.get("0", "PLAYER 1"),
+        player_names.get("1", "PLAYER 2"),
+    )
 
-    server = LobbyServer(host_character)
+    server = LobbyServer(host_character, player_names)
     try:
         server.start()
     except Exception as exc:
@@ -151,7 +158,7 @@ def create_lobby_flow():
         draw_center(f"Players Connected: {server.player_count()} / 2", 420)
         draw_center(status, 465, False, CYAN)
         draw_center("Esc = cancel lobby", 540, False, GRAY)
-        draw_lobby_side_panel(server.player_count())
+        draw_lobby_side_panel(server.player_count(), player_names)
         draw_secret_image_popup()
         pygame.display.flip()
 

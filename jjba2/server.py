@@ -7,7 +7,7 @@ from .input_state import empty_input
 from .protocol import recv_json, send_json, tune_socket
 
 class LobbyServer:
-    def __init__(self, host_character="joseph"):
+    def __init__(self, host_character="joseph", player_names=None):
         self.host = "0.0.0.0"
         self.port = PORT
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -15,6 +15,7 @@ class LobbyServer:
         self.clients = {}
         self.inputs = {0: empty_input(), 1: empty_input()}
         self.selections = {0: host_character, 1: None}
+        self.player_names = player_names or {"0": "PLAYER 1", "1": "PLAYER 2"}
         self.lock = threading.Lock()
         self.running = True
         self.started = False
@@ -52,6 +53,7 @@ class LobbyServer:
                         "type": "welcome",
                         "player_id": player_id,
                         "selections": self.selections,
+                        "player_names": self.player_names,
                     },
                 )
 
@@ -143,6 +145,10 @@ class LobbyServer:
         if p1 == p2:
             p2 = next(key for key in CHARACTER_ORDER if key != p1)
         return p1, p2
+
+    def get_player_names(self):
+        with self.lock:
+            return dict(self.player_names)
 
     def stop(self):
         self.running = False

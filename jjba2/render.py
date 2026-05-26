@@ -761,7 +761,8 @@ def draw_showdown_preview(x, y, w, h):
     draw_small("CAESAR ZEPPELI", arena.right - 220, arena.bottom - 42, YELLOW, 185)
 
 
-def draw_lobby_side_panel(players=1):
+def draw_lobby_side_panel(players=1, player_names=None):
+    player_names = player_names or {"0": "PLAYER 1", "1": "PLAYER 2"}
     panel = pygame.Rect(960, 25, 295, 445)
     draw_gold_frame(panel, 3)
     draw_text_in_rect(
@@ -810,7 +811,7 @@ def draw_lobby_side_panel(players=1):
     pygame.draw.rect(screen, (70, 10, 13), p1, border_radius=3)
     pygame.draw.rect(screen, RED, p1, 2, border_radius=3)
     draw_text_in_rect(
-        "PLAYER 1",
+        player_names.get("0", "PLAYER 1"),
         pygame.Rect(995, 278, 150, 32),
         font,
         RED,
@@ -833,7 +834,7 @@ def draw_lobby_side_panel(players=1):
     pygame.draw.rect(screen, (18, 18, 24), p2, border_radius=3)
     pygame.draw.rect(screen, p2_color, p2, 2, border_radius=3)
     draw_text_in_rect(
-        "PLAYER 2",
+        player_names.get("1", "PLAYER 2"),
         pygame.Rect(995, 384, 165, 30),
         font,
         p2_color,
