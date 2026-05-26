@@ -10,6 +10,19 @@ Install Pygame, then run:
 python jojo_lan_fighter.py
 ```
 
+## Code Layout
+
+- `jojo_lan_fighter.py` launches the game.
+- `jjba2/config.py` initializes Pygame, logging, screen, fonts, and constants.
+- `jjba2/data.py` contains characters, attacks, difficulties, and sprite metadata.
+- `jjba2/protocol.py` contains LAN message framing and socket helpers.
+- `jjba2/server.py` contains the lobby/game server.
+- `jjba2/client.py` contains the LAN client.
+- `jjba2/fighter.py` contains fighter movement, attack, damage, and state logic.
+- `jjba2/gameplay.py` contains combat stepping, AI, singleplayer, and match loops.
+- `jjba2/render.py` contains drawing, screens, music, and visual helpers.
+- `jjba2/menus.py` contains menu and lobby flow.
+
 ## LAN Protocol
 
 LAN messages are sent over TCP as a 4-byte big-endian payload length followed
