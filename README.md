@@ -15,6 +15,8 @@ python jojo_lan_fighter.py
 - `jojo_lan_fighter.py` launches the game.
 - `jjba2/config.py` initializes Pygame, logging, screen, fonts, and constants.
 - `jjba2/data.py` contains characters, attacks, difficulties, and sprite metadata.
+- `jjba2/ai_names.py` generates JoJo-themed player names with OpenAI when
+  configured, with local fallback names.
 - `jjba2/protocol.py` contains LAN message framing and socket helpers.
 - `jjba2/server.py` contains the lobby/game server.
 - `jjba2/client.py` contains the LAN client.
@@ -30,6 +32,14 @@ by a UTF-8 JSON payload. The receiver reads exactly the 4-byte header first,
 then exactly the announced payload length. Clients send character selections
 and input snapshots; the host server sends lobby responses and authoritative
 match state snapshots.
+
+## AI Player Names
+
+Set `OPENAI_API_KEY` before launching the game to let OpenAI generate short
+JoJo-themed display names for Player 1 and Player 2. The game uses
+`gpt-5-mini` by default; set `OPENAI_NAME_MODEL` to use a different compatible
+Responses API model. If the key or network is unavailable, the game falls back
+to local JoJo-themed names so matches still start normally.
 
 Optional local assets:
 

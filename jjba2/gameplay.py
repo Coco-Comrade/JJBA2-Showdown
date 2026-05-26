@@ -3,6 +3,7 @@ import time
 
 import pygame
 
+from .ai_names import generate_ai_player_names
 from .config import *
 from .data import *
 from .fighter import Fighter
@@ -33,12 +34,13 @@ def handle_combat(attacker, defender):
             attacker.attack_timer = 0
 
 
-def make_state(p1, p2, winner, disconnected=False):
+def make_state(p1, p2, winner, disconnected=False, player_names=None):
     return {
         "players": {
             "0": p1.to_dict(),
             "1": p2.to_dict(),
         },
+        "player_names": player_names or {"0": "PLAYER 1", "1": "PLAYER 2"},
         "winner": winner,
         "disconnected": disconnected,
     }
@@ -121,6 +123,7 @@ def make_ai_input(ai, player, frame_count, difficulty_key="hard"):
 
 def run_game_server(server):
     p1_key, p2_key = server.get_characters()
+    player_names = generate_ai_player_names()
     logger.info("Starting LAN match: %s vs %s", p1_key, p2_key)
     p1 = Fighter(200, 300, p1_key, True)
     p2 = Fighter(900, 300, p2_key, False)
@@ -129,7 +132,7 @@ def run_game_server(server):
     send_duration = 1 / NET_FPS
     next_frame_time = time.perf_counter()
     next_send_time = next_frame_time
-    server.broadcast_state(make_state(p1, p2, winner))
+    server.broadcast_state(make_state(p1, p2, winner, player_names=player_names))
 
     while server.running:
         now = time.perf_counter()
@@ -147,7 +150,9 @@ def run_game_server(server):
             return "menu"
 
         if server.player_count() < 2:
-            server.broadcast_state(make_state(p1, p2, winner, disconnected=True))
+            server.broadcast_state(
+                make_state(p1, p2, winner, disconnected=True, player_names=player_names)
+            )
             logger.info("LAN match ended because a player disconnected")
             return "menu"
 
@@ -155,7 +160,7 @@ def run_game_server(server):
 
         now = time.perf_counter()
         if now >= next_send_time:
-            server.broadcast_state(make_state(p1, p2, winner))
+            server.broadcast_state(make_state(p1, p2, winner, player_names=player_names))
             next_send_time = now + send_duration
 
     return "menu"
@@ -179,6 +184,7 @@ def run_singleplayer_game():
     round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"])
     player = Fighter(200, 300, player_key, True)
     ai = Fighter(900, 300, ai_key, False)
+    player_names = generate_ai_player_names()
     winner = None
     frame_count = 0
 
@@ -200,7 +206,7 @@ def run_singleplayer_game():
         ai_input = make_ai_input(ai, player, frame_count, difficulty_key)
         winner = step_fight(player, ai, player_input, ai_input, winner)
 
-        state = make_state(player, ai, winner)
+        state = make_state(player, ai, winner, player_names=player_names)
         draw_match(state, 0)
 
         if winner is not None:
