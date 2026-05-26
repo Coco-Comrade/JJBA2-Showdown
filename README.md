@@ -15,8 +15,7 @@ python jojo_lan_fighter.py
 - `jojo_lan_fighter.py` launches the game.
 - `jjba2/config.py` initializes Pygame, logging, screen, fonts, and constants.
 - `jjba2/data.py` contains characters, attacks, difficulties, and sprite metadata.
-- `jjba2/ai_names.py` generates JoJo-themed player names with OpenAI when
-  configured, with local fallback names.
+- `jjba2/ai_names.py` generates JoJo-themed player names with a local AI model.
 - `jjba2/protocol.py` contains LAN message framing and socket helpers.
 - `jjba2/server.py` contains the lobby/game server.
 - `jjba2/client.py` contains the LAN client.
@@ -35,12 +34,15 @@ match state snapshots.
 
 ## AI Player Names
 
-Set `OPENAI_API_KEY` before launching the game to let OpenAI generate short
-JoJo-themed display names for Player 1 and Player 2. The game uses
-`gpt-5-mini` by default; set `OPENAI_NAME_MODEL` to use a different compatible
-Responses API model. LAN names are generated when the host creates a lobby, so
-they can appear before the fight starts. If the key or network is unavailable,
-the game falls back to local JoJo-themed names so matches still start normally.
+The game can ask a local AI model to create short JoJo-themed display names for
+Player 1 and Player 2. By default it calls an Ollama-compatible local endpoint:
+`http://localhost:11434/api/generate` with model `llama3.2`.
+
+Set `JJBA2_LOCAL_AI_URL` or `JJBA2_LOCAL_AI_MODEL` to use a different local
+server or model. LAN names are generated when the host creates a lobby, so they
+can appear before the fight starts. This does not call OpenAI or any paid
+external API. If the local model is not running, the game falls back to local
+JoJo-themed names so matches still start normally.
 
 Optional local assets:
 
