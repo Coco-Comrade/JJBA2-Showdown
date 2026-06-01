@@ -1,6 +1,5 @@
-import json
+import pickle
 import socket
-import struct
 
 from .config import *
 
@@ -27,9 +26,9 @@ def get_local_ip():
             s.close()
 
 
-def send_json(sock, data):
-    payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
-    header = struct.pack("!I", len(payload))
+def send_message(sock, data):
+    payload = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+    header = str(len(payload)).encode("ascii") + MESSAGE_LENGTH_SEPARATOR
     sock.sendall(header + payload)
 
 
@@ -50,11 +49,21 @@ def recv_exact(sock, byte_count):
     return data
 
 
-def recv_json(sock):
-    header = recv_exact(sock, MESSAGE_HEADER_BYTES)
-    message_length = struct.unpack("!I", header)[0]
+def recv_message(sock):
+    header = b""
+    while MESSAGE_LENGTH_SEPARATOR not in header:
+        chunk = sock.recv(1)
+        if not chunk:
+            raise ConnectionError("Disconnected")
+        header += chunk
+
+    length_text = header[:-len(MESSAGE_LENGTH_SEPARATOR)].decode("ascii")
+    if not length_text.isdigit():
+        raise ConnectionError(f"Bad message length header: {length_text!r}")
+
+    message_length = int(length_text)
     if message_length > MAX_MESSAGE_BYTES:
         raise ConnectionError(f"Message too large: {message_length} bytes")
 
     payload = recv_exact(sock, message_length)
-    return json.loads(payload.decode("utf-8"))
+    return pickle.loads(payload)

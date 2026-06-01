@@ -10,7 +10,7 @@ JJBA2: The Showdown is a Python/Pygame arcade fighting game. It supports:
 - Two-player LAN matches with a host lobby.
 - A server-authoritative network model where clients send input and the host
   server sends back the official match state.
-- Length-prefixed TCP messages for reliable JSON framing.
+- Length-prefixed TCP messages for reliable pickle dictionary framing.
 - Local AI-generated JoJo-themed player display names through an
   Ollama-compatible local API.
 
@@ -53,11 +53,23 @@ run_game.bat
 
 ## LAN Protocol
 
-LAN messages are sent over TCP as a 4-byte big-endian payload length followed
-by a UTF-8 JSON payload. The receiver reads exactly the 4-byte header first,
-then exactly the announced payload length. Clients send character selections
-and input snapshots; the host server sends lobby responses and authoritative
-match state snapshots.
+LAN messages are Python dictionaries serialized with `pickle`. Each message is
+sent over TCP as ASCII payload length, then `#`, then the exact pickle payload:
+
+```text
+length#pickled_dictionary
+```
+
+For example, the logical message still looks like:
+
+```python
+{"type": "input", "input": {...}}
+```
+
+The receiver reads digits until `#`, converts that length to an integer, then
+reads exactly that many bytes and unpickles the dictionary. Clients send
+character selections and input snapshots; the host server sends lobby responses
+and authoritative match state snapshots.
 
 ## AI Player Names
 

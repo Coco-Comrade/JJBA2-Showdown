@@ -4,7 +4,7 @@ import threading
 from .config import *
 from .data import *
 from .input_state import empty_input
-from .protocol import recv_json, send_json, tune_socket
+from .protocol import recv_message, send_message, tune_socket
 
 class LobbyServer:
     def __init__(self, host_character="joseph", player_names=None):
@@ -37,7 +37,7 @@ class LobbyServer:
 
                 with self.lock:
                     if len(self.clients) >= 2:
-                        send_json(conn, {"type": "full"})
+                        send_message(conn, {"type": "full"})
                         conn.close()
                         logger.info("Rejected connection because lobby is full")
                         continue
@@ -47,7 +47,7 @@ class LobbyServer:
                     self.started = len(self.clients) == 2
                     logger.info("Assigned client to player %s", player_id + 1)
 
-                send_json(
+                send_message(
                     conn,
                     {
                         "type": "welcome",
@@ -72,7 +72,7 @@ class LobbyServer:
     def client_loop(self, conn, player_id):
         while self.running:
             try:
-                data = recv_json(conn)
+                data = recv_message(conn)
                 if data.get("type") == "input":
                     with self.lock:
                         self.inputs[player_id] = data["input"]
@@ -117,7 +117,7 @@ class LobbyServer:
         dead = []
         for pid, conn in client_items:
             try:
-                send_json(conn, {"type": "state", "state": state})
+                send_message(conn, {"type": "state", "state": state})
             except Exception as exc:
                 logger.info("Dropping player %s after send failure: %s", pid + 1, exc)
                 dead.append(pid)

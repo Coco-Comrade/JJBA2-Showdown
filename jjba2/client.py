@@ -4,7 +4,7 @@ import threading
 import time
 
 from .config import *
-from .protocol import recv_json, send_json, tune_socket
+from .protocol import recv_message, send_message, tune_socket
 
 class GameClient:
     def __init__(self):
@@ -28,7 +28,7 @@ class GameClient:
         self.sock.connect((host_ip, PORT))
         self.sock.settimeout(None)
 
-        data = recv_json(self.sock)
+        data = recv_message(self.sock)
         if data.get("type") == "full":
             raise ConnectionError("Lobby is full")
         if data.get("type") != "welcome" or "player_id" not in data:
@@ -50,7 +50,7 @@ class GameClient:
     def receive_loop(self):
         while self.running:
             try:
-                data = recv_json(self.sock)
+                data = recv_message(self.sock)
                 if data.get("type") == "state":
                     with self.lock:
                         self.latest_state = data["state"]
@@ -65,12 +65,12 @@ class GameClient:
         now = time.perf_counter()
         if input_data == self.last_sent_input and now - self.last_input_send_time < 0.1:
             return
-        send_json(self.sock, {"type": "input", "input": input_data})
+        send_message(self.sock, {"type": "input", "input": input_data})
         self.last_sent_input = dict(input_data)
         self.last_input_send_time = now
 
     def select_character(self, character_key):
-        send_json(self.sock, {"type": "select", "character": character_key})
+        send_message(self.sock, {"type": "select", "character": character_key})
         self.selections[self.player_id] = character_key
         logger.info("Sent character selection: %s", character_key)
 
