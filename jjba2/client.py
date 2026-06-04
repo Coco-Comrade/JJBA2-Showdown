@@ -6,6 +6,7 @@ import threading
 import time
 
 from .config import *
+from .input_state import normalize_input
 from .protocol import recv_message, send_message, tune_socket
 
 class GameClient:
@@ -80,6 +81,7 @@ class GameClient:
 
     def send_input(self, input_data):
         """Send the current input snapshot unless it is an unchanged repeat."""
+        input_data = normalize_input(input_data)
         now = time.perf_counter()
         if input_data == self.last_sent_input and now - self.last_input_send_time < 0.1:
             return
