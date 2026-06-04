@@ -15,6 +15,16 @@ def empty_input():
     }
 
 
+def normalize_input(input_data):
+    """Return a complete safe input snapshot from any dictionary-like value."""
+    normalized = empty_input()
+    if not isinstance(input_data, dict):
+        return normalized
+    for key in normalized:
+        normalized[key] = bool(input_data.get(key, False))
+    return normalized
+
+
 def get_local_input():
     """Read the keyboard and convert pressed keys into the game's input format."""
     keys = pygame.key.get_pressed()
@@ -28,3 +38,4 @@ def get_local_input():
     inp["heavy"] = keys[pygame.K_l] or keys[pygame.K_o] or keys[pygame.K_KP3]
     inp["restart"] = keys[pygame.K_r]
     inp["menu"] = keys[pygame.K_ESCAPE]
+    return inp

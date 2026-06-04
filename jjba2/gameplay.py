@@ -154,6 +154,9 @@ def run_game_server(server):
         inputs = server.get_inputs()
 
         if inputs[0].get("menu") or inputs[1].get("menu"):
+            server.broadcast_state(
+                make_state(p1, p2, winner, disconnected=True, player_names=player_names)
+            )
             logger.info("LAN match ended by menu input")
             return "menu"
 
@@ -192,7 +195,8 @@ def run_singleplayer_game():
     message_screen("PREPARING MATCH", ["Generating fighter names..."])
     player_names = generate_ai_player_names()
     stop_menu_music()
-    round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"])
+    if not round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"]):
+        return "menu"
     player = Fighter(200, 300, player_key, True)
     ai = Fighter(900, 300, ai_key, False)
     winner = None
@@ -261,6 +265,10 @@ def run_client_game(client):
                 [str(exc), "Press Enter to return to the menu"],
             )
             wait_for_enter()
+            return "menu"
+
+        if inp["menu"]:
+            logger.info("Client returned to menu")
             return "menu"
 
         state = client.get_state()

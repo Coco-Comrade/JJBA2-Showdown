@@ -5,7 +5,7 @@ import threading
 
 from .config import *
 from .data import *
-from .input_state import empty_input
+from .input_state import empty_input, normalize_input
 from .protocol import recv_message, send_message, tune_socket
 
 class LobbyServer:
@@ -44,7 +44,10 @@ class LobbyServer:
 
                 with self.lock:
                     if len(self.clients) >= 2:
-                        send_message(conn, {"type": "full"})
+                        try:
+                            send_message(conn, {"type": "full"})
+                        except Exception as exc:
+                            logger.debug("Could not send lobby-full message: %s", exc)
                         conn.close()
                         logger.info("Rejected connection because lobby is full")
                         continue
@@ -54,15 +57,26 @@ class LobbyServer:
                     self.started = len(self.clients) == 2
                     logger.info("Assigned client to player %s", player_id + 1)
 
-                send_message(
-                    conn,
-                    {
-                        "type": "welcome",
-                        "player_id": player_id,
-                        "selections": self.selections,
-                        "player_names": self.player_names,
-                    },
-                )
+                try:
+                    send_message(
+                        conn,
+                        {
+                            "type": "welcome",
+                            "player_id": player_id,
+                            "selections": self.selections,
+                            "player_names": self.player_names,
+                        },
+                    )
+                except Exception as exc:
+                    logger.info("Could not welcome player %s: %s", player_id + 1, exc)
+                    with self.lock:
+                        if player_id in self.clients:
+                            del self.clients[player_id]
+                        self.inputs[player_id] = empty_input()
+                        self.selections[player_id] = None
+                        self.started = False
+                    conn.close()
+                    continue
 
                 thread = threading.Thread(
                     target=self.client_loop,
@@ -83,7 +97,7 @@ class LobbyServer:
                 data = recv_message(conn)
                 if data.get("type") == "input":
                     with self.lock:
-                        self.inputs[player_id] = data["input"]
+                        self.inputs[player_id] = normalize_input(data.get("input"))
                 elif data.get("type") == "select":
                     character_key = data.get("character")
                     with self.lock:
@@ -111,7 +125,12 @@ class LobbyServer:
                     if player_id in self.clients:
                         del self.clients[player_id]
                     self.inputs[player_id] = empty_input()
+                    self.selections[player_id] = None
                     self.started = False
+                try:
+                    conn.close()
+                except Exception as close_exc:
+                    logger.debug("Client socket close failed: %s", close_exc)
                 break
 
     def get_inputs(self):
@@ -130,14 +149,19 @@ class LobbyServer:
                 send_message(conn, {"type": "state", "state": state})
             except Exception as exc:
                 logger.info("Dropping player %s after send failure: %s", pid + 1, exc)
-                dead.append(pid)
+                dead.append((pid, conn))
 
         if dead:
             with self.lock:
-                for pid in dead:
+                for pid, conn in dead:
                     if pid in self.clients:
                         del self.clients[pid]
                     self.inputs[pid] = empty_input()
+                    self.selections[pid] = None
+                    try:
+                        conn.close()
+                    except Exception as close_exc:
+                        logger.debug("Client socket close failed: %s", close_exc)
                 self.started = len(self.clients) == 2
 
     def player_count(self):

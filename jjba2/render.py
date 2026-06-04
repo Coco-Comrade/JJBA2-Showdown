@@ -1119,10 +1119,11 @@ def round_intro(p1_name="Joseph Joestar", p2_name="Wamuu"):
                     pygame.quit()
                     quit()
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    return
+                    return False
 
             draw_stage()
             color = YELLOW if label == "FIGHT!" else WHITE
             draw_center(label, 260, True, color)
             draw_center(f"{p1_name} vs. {p2_name}", 350, False, CYAN)
             pygame.display.flip()
+    return True

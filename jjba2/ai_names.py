@@ -11,6 +11,18 @@ from .config import logger
 LOCAL_AI_URL = os.environ.get("JJBA2_LOCAL_AI_URL", "http://localhost:11434/api/generate")
 LOCAL_AI_MODEL = os.environ.get("JJBA2_LOCAL_AI_MODEL", "llama3.2")
 
+
+def _read_local_ai_timeout():
+    """Read the local AI timeout safely, even if the environment value is bad."""
+    try:
+        return max(0.5, float(os.environ.get("JJBA2_LOCAL_AI_TIMEOUT", "3")))
+    except ValueError:
+        logger.warning("Bad JJBA2_LOCAL_AI_TIMEOUT value; using 3 seconds")
+        return 3
+
+
+LOCAL_AI_TIMEOUT = _read_local_ai_timeout()
+
 FALLBACK_EPITHETS = (
     "Ripple",
     "Hamon",
@@ -68,13 +80,13 @@ def _parse_names(text):
     text = text.strip()
     try:
         data = json.loads(text)
-        names = data.get("names", data)
+        names = data.get("names", data) if isinstance(data, dict) else data
         if isinstance(names, list) and len(names) >= 2:
             first = _clean_name(str(names[0]))
             second = _clean_name(str(names[1]))
             if first and second and first != second:
                 return {"0": first, "1": second}
-    except json.JSONDecodeError:
+    except (TypeError, json.JSONDecodeError):
         pass
 
     lines = [
@@ -117,7 +129,7 @@ def _ask_local_ai_for_names():
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=8) as response:
+    with urllib.request.urlopen(request, timeout=LOCAL_AI_TIMEOUT) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return _parse_names(payload.get("response", ""))
 

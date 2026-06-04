@@ -104,6 +104,7 @@ def create_lobby_flow():
     if not host_character:
         return
     play_menu_music()
+    message_screen("CREATING LOBBY", ["Generating player names..."])
     player_names = generate_ai_player_names()
     logger.info(
         "Creating lobby as %s with AI names %s vs %s",
@@ -176,7 +177,10 @@ def create_lobby_flow():
 
     stop_menu_music()
     p1_key, p2_key = server.get_characters()
-    round_intro(CHARACTERS[p1_key]["name"], CHARACTERS[p2_key]["name"])
+    if not round_intro(CHARACTERS[p1_key]["name"], CHARACTERS[p2_key]["name"]):
+        server.stop()
+        client.close()
+        return
     threading.Thread(target=server_game_thread, daemon=True).start()
     run_client_game(client)
     server.stop()

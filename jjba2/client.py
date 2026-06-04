@@ -27,31 +27,41 @@ class GameClient:
 
     def connect(self, host_ip):
         """Connect to a lobby server and return the assigned player id."""
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        tune_socket(self.sock)
-        self.sock.settimeout(8)
-        logger.info("Connecting to lobby at %s:%s", host_ip, PORT)
-        self.sock.connect((host_ip, PORT))
-        self.sock.settimeout(None)
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tune_socket(self.sock)
+            self.sock.settimeout(8)
+            logger.info("Connecting to lobby at %s:%s", host_ip, PORT)
+            self.sock.connect((host_ip, PORT))
+            self.sock.settimeout(None)
 
-        data = recv_message(self.sock)
-        if data.get("type") == "full":
-            raise ConnectionError("Lobby is full")
-        if data.get("type") != "welcome" or "player_id" not in data:
-            raise ConnectionError("Bad server response")
+            data = recv_message(self.sock)
+            if data.get("type") == "full":
+                raise ConnectionError("Lobby is full")
+            if data.get("type") != "welcome" or "player_id" not in data:
+                raise ConnectionError("Bad server response")
 
-        self.player_id = data["player_id"]
-        self.selections = {
-            int(pid): value for pid, value in data.get("selections", {}).items()
-        }
-        self.player_names = {
-            str(pid): value for pid, value in data.get("player_names", {}).items()
-        } or self.player_names
-        self.running = True
-        self.receiver_thread = threading.Thread(target=self.receive_loop, daemon=True)
-        self.receiver_thread.start()
-        logger.info("Connected as player %s", self.player_id + 1)
-        return self.player_id
+            self.player_id = int(data["player_id"])
+            if self.player_id not in (0, 1):
+                raise ConnectionError("Bad player id from server")
+
+            selections = data.get("selections", {})
+            if not isinstance(selections, dict):
+                selections = {}
+            self.selections = {int(pid): value for pid, value in selections.items()}
+
+            player_names = data.get("player_names", {})
+            if not isinstance(player_names, dict):
+                player_names = {}
+            self.player_names = {str(pid): value for pid, value in player_names.items()} or self.player_names
+            self.running = True
+            self.receiver_thread = threading.Thread(target=self.receive_loop, daemon=True)
+            self.receiver_thread.start()
+            logger.info("Connected as player %s", self.player_id + 1)
+            return self.player_id
+        except Exception:
+            self.close()
+            raise
 
     def receive_loop(self):
         """Continuously receive state messages on a background thread."""
@@ -91,11 +101,13 @@ class GameClient:
     def close(self):
         """Shut down and close the client socket."""
         self.running = False
-        try:
-            self.sock.shutdown(socket.SHUT_RDWR)
-        except Exception as exc:
-            logger.debug("Client socket shutdown skipped: %s", exc)
-        try:
-            self.sock.close()
-        except Exception as exc:
-            logger.debug("Client socket close skipped: %s", exc)
+        if self.sock:
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except Exception as exc:
+                logger.debug("Client socket shutdown skipped: %s", exc)
+            try:
+                self.sock.close()
+            except Exception as exc:
+                logger.debug("Client socket close skipped: %s", exc)
+            self.sock = None

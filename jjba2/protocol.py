@@ -30,6 +30,8 @@ def get_local_ip():
 
 def send_message(sock, data):
     """Send one dictionary as length#pickle_payload over a TCP socket."""
+    if not isinstance(data, dict):
+        raise TypeError("Protocol messages must be dictionaries")
     payload = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
     header = str(len(payload)).encode("ascii") + MESSAGE_LENGTH_SEPARATOR
     sock.sendall(header + payload)
@@ -62,14 +64,21 @@ def recv_message(sock):
         if not chunk:
             raise ConnectionError("Disconnected")
         header += chunk
+        if len(header) > 12:
+            raise ConnectionError("Message length header is too long")
 
     length_text = header[:-len(MESSAGE_LENGTH_SEPARATOR)].decode("ascii")
     if not length_text.isdigit():
         raise ConnectionError(f"Bad message length header: {length_text!r}")
 
     message_length = int(length_text)
+    if message_length <= 0:
+        raise ConnectionError(f"Bad message length: {message_length}")
     if message_length > MAX_MESSAGE_BYTES:
         raise ConnectionError(f"Message too large: {message_length} bytes")
 
     payload = recv_exact(sock, message_length)
-    return pickle.loads(payload)
+    message = pickle.loads(payload)
+    if not isinstance(message, dict):
+        raise ConnectionError("Protocol message must be a dictionary")
+    return message
