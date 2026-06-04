@@ -1,10 +1,15 @@
+"""Fighter movement, attacks, damage, and network state conversion."""
+
 import pygame
 
 from .config import *
 from .data import *
 
 class Fighter:
+    """Store and update one playable fighter's combat state."""
+
     def __init__(self, x, y, character_key, facing_right=True):
+        """Create a fighter at a starting position with a chosen character."""
         self.character_key = character_key
         self.character = CHARACTERS[character_key]
         self.rect = pygame.Rect(x, y, 80, 160)
@@ -30,6 +35,7 @@ class Fighter:
         self.last_dx = 0
 
     def reset(self, x, y, facing_right):
+        """Restore the fighter to full health and a fresh round position."""
         self.rect.x = x
         self.rect.y = y
         self.vel_y = 0
@@ -49,11 +55,13 @@ class Fighter:
         self.last_dx = 0
 
     def face_opponent(self, opponent):
+        """Turn toward the opponent unless this fighter is locked in an action."""
         if self.attacking or self.hit_stun > 0:
             return
         self.facing_right = self.rect.centerx <= opponent.rect.centerx
 
     def move_from_input(self, inp):
+        """Apply walking, jumping, blocking, and attack-start input for one frame."""
         if self.hp <= 0:
             self.remember_attack_buttons(inp)
             return
@@ -99,10 +107,12 @@ class Fighter:
         self.remember_attack_buttons(inp)
 
     def remember_attack_buttons(self, inp):
+        """Save the current attack button states to detect new button presses."""
         for button in ATTACK_BUTTONS:
             self.prev_attack_buttons[button] = inp[button]
 
     def apply_gravity(self):
+        """Move the fighter vertically and update ground/coyote-time state."""
         self.vel_y += GRAVITY
         self.rect.y += self.vel_y
 
@@ -119,6 +129,7 @@ class Fighter:
             self.on_ground = False
 
     def start_attack(self, attack_type):
+        """Start an attack and load its startup, active, and recovery timing."""
         data = ATTACKS[attack_type]
         self.attacking = True
         self.attack_type = attack_type
@@ -126,6 +137,7 @@ class Fighter:
         self.attack_timer = self.attack_total
 
     def get_attack_phase(self):
+        """Return the current attack phase: startup, active, recovery, or None."""
         if not self.attacking or not self.attack_type:
             return None
         data = ATTACKS[self.attack_type]
@@ -137,6 +149,7 @@ class Fighter:
         return "recovery"
 
     def update(self):
+        """Advance timers for attacks, hit cooldown, hit stun, and combo text."""
         if self.attacking:
             self.attack_timer -= 1
             if self.attack_timer <= 0:
@@ -154,6 +167,7 @@ class Fighter:
             self.combo_text_timer -= 1
 
     def get_attack_box(self):
+        """Return the active hitbox rectangle, or None when no hitbox is active."""
         if self.get_attack_phase() != "active":
             return None
         data = ATTACKS[self.attack_type]
@@ -172,6 +186,7 @@ class Fighter:
         )
 
     def take_damage(self, amount, stun, knockback, attacker_on_left):
+        """Apply damage, stun, and knockback; return True if the hit connected."""
         if self.hit_cooldown > 0:
             return False
 
@@ -195,6 +210,7 @@ class Fighter:
         return True
 
     def to_dict(self):
+        """Convert this fighter into the dictionary sent in server state messages."""
         return {
             "x": self.rect.x,
             "y": self.rect.y,

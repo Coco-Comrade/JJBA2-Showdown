@@ -4,6 +4,7 @@ from .gameplay import run_singleplayer_game
 
 
 def main():
+    """Run the main game loop and route menu choices to the correct mode."""
     logger.info("JJBA2 The Showdown started")
     intro_screen()
     while True:

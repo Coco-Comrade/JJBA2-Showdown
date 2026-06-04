@@ -1,3 +1,5 @@
+"""Gameplay loops for combat, singleplayer, and LAN matches."""
+
 import random
 import time
 
@@ -19,6 +21,7 @@ from .render import (
 )
 
 def handle_combat(attacker, defender):
+    """Check whether one fighter's active attack hits the other fighter."""
     atk_box = attacker.get_attack_box()
     if atk_box and atk_box.colliderect(defender.rect):
         data = ATTACKS.get(attacker.attack_type, ATTACKS["light"])
@@ -35,6 +38,7 @@ def handle_combat(attacker, defender):
 
 
 def make_state(p1, p2, winner, disconnected=False, player_names=None):
+    """Build the full match-state dictionary used by rendering and networking."""
     return {
         "players": {
             "0": p1.to_dict(),
@@ -47,6 +51,7 @@ def make_state(p1, p2, winner, disconnected=False, player_names=None):
 
 
 def step_fight(p1, p2, input1, input2, winner):
+    """Run one authoritative frame of fighting logic and return the winner."""
     if winner is not None:
         if input1.get("restart") or input2.get("restart"):
             p1.reset(200, 300, True)
@@ -76,6 +81,7 @@ def step_fight(p1, p2, input1, input2, winner):
 
 
 def make_ai_input(ai, player, frame_count, difficulty_key="hard"):
+    """Create a CPU input snapshot based on distance, danger, and difficulty."""
     inp = empty_input()
     difficulty = DIFFICULTIES.get(difficulty_key, DIFFICULTIES["hard"])
     distance = player.rect.centerx - ai.rect.centerx
@@ -122,6 +128,7 @@ def make_ai_input(ai, player, frame_count, difficulty_key="hard"):
 
 
 def run_game_server(server):
+    """Run the host's authoritative LAN match loop and broadcast state updates."""
     p1_key, p2_key = server.get_characters()
     player_names = server.get_player_names()
     logger.info("Starting LAN match: %s vs %s", p1_key, p2_key)
@@ -167,6 +174,7 @@ def run_game_server(server):
 
 
 def run_singleplayer_game():
+    """Run a local singleplayer match against the rule-based CPU fighter."""
     player_key = character_select_screen("SINGLE PLAYER SELECT")
     if not player_key:
         return "menu"
@@ -228,6 +236,7 @@ def run_singleplayer_game():
 # CLIENT LOOP
 # =========================
 def run_client_game(client):
+    """Run the local client loop that sends input and draws server state."""
     logger.info("Starting client game loop")
     last_state_time = time.time()
     while True:

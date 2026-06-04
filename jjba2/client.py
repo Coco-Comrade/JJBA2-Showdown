@@ -1,3 +1,5 @@
+"""Client-side LAN connection code for joining or hosting a match."""
+
 import json
 import socket
 import threading
@@ -7,7 +9,10 @@ from .config import *
 from .protocol import recv_message, send_message, tune_socket
 
 class GameClient:
+    """Connect to a lobby, send local input, and receive server state."""
+
     def __init__(self):
+        """Create an unconnected game client with empty network state."""
         self.sock = None
         self.player_id = None
         self.latest_state = None
@@ -21,6 +26,7 @@ class GameClient:
         self.player_names = {"0": "PLAYER 1", "1": "PLAYER 2"}
 
     def connect(self, host_ip):
+        """Connect to a lobby server and return the assigned player id."""
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tune_socket(self.sock)
         self.sock.settimeout(8)
@@ -48,6 +54,7 @@ class GameClient:
         return self.player_id
 
     def receive_loop(self):
+        """Continuously receive state messages on a background thread."""
         while self.running:
             try:
                 data = recv_message(self.sock)
@@ -62,6 +69,7 @@ class GameClient:
                 break
 
     def send_input(self, input_data):
+        """Send the current input snapshot unless it is an unchanged repeat."""
         now = time.perf_counter()
         if input_data == self.last_sent_input and now - self.last_input_send_time < 0.1:
             return
@@ -70,15 +78,18 @@ class GameClient:
         self.last_input_send_time = now
 
     def select_character(self, character_key):
+        """Tell the server which character this client chose in the lobby."""
         send_message(self.sock, {"type": "select", "character": character_key})
         self.selections[self.player_id] = character_key
         logger.info("Sent character selection: %s", character_key)
 
     def get_state(self):
+        """Return a safe copy of the newest authoritative state from the server."""
         with self.lock:
             return json.loads(json.dumps(self.latest_state)) if self.latest_state else None
 
     def close(self):
+        """Shut down and close the client socket."""
         self.running = False
         try:
             self.sock.shutdown(socket.SHUT_RDWR)

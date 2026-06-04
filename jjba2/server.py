@@ -1,3 +1,5 @@
+"""Host-side LAN lobby and authoritative match server code."""
+
 import socket
 import threading
 
@@ -7,7 +9,10 @@ from .input_state import empty_input
 from .protocol import recv_message, send_message, tune_socket
 
 class LobbyServer:
+    """Accept two clients, store their inputs, and broadcast server state."""
+
     def __init__(self, host_character="joseph", player_names=None):
+        """Create a lobby server with the host character already selected."""
         self.host = "0.0.0.0"
         self.port = PORT
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -22,6 +27,7 @@ class LobbyServer:
         self.thread = None
 
     def start(self):
+        """Bind the TCP socket, listen for players, and start accepting clients."""
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(2)
         self.thread = threading.Thread(target=self.accept_loop, daemon=True)
@@ -29,6 +35,7 @@ class LobbyServer:
         logger.info("Lobby server started on %s:%s", self.host, self.port)
 
     def accept_loop(self):
+        """Accept incoming clients and assign them Player 1 or Player 2."""
         while self.running:
             try:
                 conn, addr = self.server_socket.accept()
@@ -70,6 +77,7 @@ class LobbyServer:
                 break
 
     def client_loop(self, conn, player_id):
+        """Receive one player's select/input messages until they disconnect."""
         while self.running:
             try:
                 data = recv_message(conn)
@@ -107,10 +115,12 @@ class LobbyServer:
                 break
 
     def get_inputs(self):
+        """Return a thread-safe copy of the latest input for both players."""
         with self.lock:
             return {pid: dict(inp) for pid, inp in self.inputs.items()}
 
     def broadcast_state(self, state):
+        """Send the official match state to every connected client."""
         with self.lock:
             client_items = list(self.clients.items())
 
@@ -131,14 +141,17 @@ class LobbyServer:
                 self.started = len(self.clients) == 2
 
     def player_count(self):
+        """Return how many clients are currently connected to the lobby."""
         with self.lock:
             return len(self.clients)
 
     def characters_ready(self):
+        """Return True when both player slots have selected a character."""
         with self.lock:
             return all(self.selections.get(pid) for pid in (0, 1))
 
     def get_characters(self):
+        """Return the two selected characters, fixing duplicates if needed."""
         with self.lock:
             p1 = self.selections.get(0) or "joseph"
             p2 = self.selections.get(1) or "caesar"
@@ -147,10 +160,12 @@ class LobbyServer:
         return p1, p2
 
     def get_player_names(self):
+        """Return a thread-safe copy of the generated player display names."""
         with self.lock:
             return dict(self.player_names)
 
     def stop(self):
+        """Stop the server socket and close all active client connections."""
         self.running = False
         logger.info("Stopping lobby server")
         try:

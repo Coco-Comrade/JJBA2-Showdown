@@ -1,3 +1,5 @@
+"""Menu screens and lobby flows that connect UI choices to game modes."""
+
 import threading
 
 import pygame
@@ -12,6 +14,7 @@ from .render import *
 from .server import LobbyServer
 
 def lobby_menu():
+    """Show the main menu and return the selected game mode."""
     play_menu_music()
     selected = 0
     options = ["Single Player", "Create LAN Lobby", "Join LAN Lobby", "Controls", "Exit"]
@@ -62,6 +65,7 @@ def lobby_menu():
 
 
 def controls_screen():
+    """Display the controls page until the player presses Enter or Esc."""
     lines = [
         "Move: A/D or Left/Right",
         "Jump: W, Up, or Space",
@@ -94,6 +98,7 @@ def controls_screen():
 
 
 def create_lobby_flow():
+    """Host a LAN lobby, wait for Player 2, then start the network match."""
     play_menu_music()
     host_character = character_select_screen("PLAYER 1 SELECT")
     if not host_character:
@@ -166,6 +171,7 @@ def create_lobby_flow():
             waiting = False
 
     def server_game_thread():
+        """Run the authoritative server match loop in the background."""
         run_game_server(server)
 
     stop_menu_music()
@@ -178,6 +184,7 @@ def create_lobby_flow():
 
 
 def join_lobby_flow():
+    """Join another player's LAN lobby, choose a character, and play as client."""
     play_menu_music()
     host_ip = text_input_screen("JOIN LOBBY")
     if not host_ip:

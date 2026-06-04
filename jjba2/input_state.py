@@ -1,6 +1,7 @@
 import pygame
 
 def empty_input():
+    """Create a blank input snapshot where every game action is released."""
     return {
         "left": False,
         "right": False,
@@ -15,6 +16,7 @@ def empty_input():
 
 
 def get_local_input():
+    """Read the keyboard and convert pressed keys into the game's input format."""
     keys = pygame.key.get_pressed()
     inp = empty_input()
     inp["left"] = keys[pygame.K_a] or keys[pygame.K_LEFT]

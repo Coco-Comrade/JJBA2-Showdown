@@ -1,3 +1,5 @@
+"""Drawing, music, and screen helpers for the JJBA2 Pygame interface."""
+
 import os
 import urllib.parse
 import urllib.request
@@ -14,6 +16,7 @@ sweetie_popup_open = False
 prev_c_and_p = False
 
 def fitted_font(text, base_size, max_width, bold=False, min_size=12):
+    """Return the largest Arial font that fits the text inside max_width."""
     size = base_size
     while size > min_size:
         candidate = pygame.font.SysFont("arial", size, bold=bold)
@@ -24,6 +27,7 @@ def fitted_font(text, base_size, max_width, bold=False, min_size=12):
 
 
 def render_fitted(text, base_font, color, max_width=None, bold=False, min_size=12):
+    """Render text, shrinking it when a maximum width is provided."""
     if max_width is None:
         return base_font.render(text, True, color)
     fitted = fitted_font(text, base_font.get_height(), max_width, bold=bold, min_size=min_size)
@@ -31,16 +35,19 @@ def render_fitted(text, base_font, color, max_width=None, bold=False, min_size=1
 
 
 def draw_text(text, x, y, use_big=False, color=WHITE, max_width=None):
+    """Draw normal or large text at a fixed screen position."""
     img = render_fitted(text, big_font if use_big else font, color, max_width, bold=use_big)
     screen.blit(img, (x, y))
 
 
 def draw_small(text, x, y, color=WHITE, max_width=None):
+    """Draw small text at a fixed screen position."""
     img = render_fitted(text, small_font, color, max_width)
     screen.blit(img, (x, y))
 
 
 def draw_center(text, y, use_big=False, color=WHITE, max_width=None):
+    """Draw text horizontally centered at the given y coordinate."""
     f = big_font if use_big else font
     img = render_fitted(text, f, color, max_width or WIDTH - 80, bold=use_big, min_size=14)
     screen.blit(img, (WIDTH // 2 - img.get_width() // 2, y))
@@ -55,6 +62,7 @@ def draw_text_in_rect(
     bold=False,
     min_size=12,
 ):
+    """Draw text centered, left-aligned, or right-aligned inside a rectangle."""
     base_font = base_font or font
     img = render_fitted(text, base_font, color, rect.width, bold=bold, min_size=min_size)
     if align == "left":
@@ -68,6 +76,7 @@ def draw_text_in_rect(
 
 
 def draw_hp_bar(x, y, hp, name, accent):
+    """Draw a simple health bar with a player name and accent border."""
     pygame.draw.rect(screen, (45, 38, 55), (x - 4, y - 4, 308, 38), border_radius=4)
     pygame.draw.rect(screen, RED, (x, y, 300, 30), border_radius=3)
     pygame.draw.rect(screen, GREEN, (x, y, 3 * max(0, hp), 30), border_radius=3)
@@ -76,6 +85,7 @@ def draw_hp_bar(x, y, hp, name, accent):
 
 
 def draw_character_portrait(character_key, rect, flip=False):
+    """Draw a character portrait from sprites, or a fallback portrait shape."""
     sprite_data = SPRITE_ANIMATIONS.get(character_key)
     if sprite_data:
         path = os.path.join(BASE_DIR, "assets", "sprites", sprite_data["folder"], "idle", "0.png")
@@ -96,6 +106,7 @@ def draw_character_portrait(character_key, rect, flip=False):
 
 
 def draw_arcade_hud(state):
+    """Draw the top arcade HUD with names, portraits, timer, and health bars."""
     p1 = state["players"]["0"]
     p2 = state["players"]["1"]
     player_names = state.get("player_names", {})
@@ -191,6 +202,7 @@ def draw_arcade_hud(state):
 
 
 def draw_stage():
+    """Draw the arena background and ground where the fighters stand."""
     screen.fill(NIGHT)
     pygame.draw.rect(screen, (28, 24, 48), (0, 0, WIDTH, HEIGHT))
     pygame.draw.circle(screen, (240, 215, 95), (WIDTH // 2, 120), 62)
@@ -221,6 +233,7 @@ def draw_stage():
 
 
 def draw_aura(rect, color, facing_right, pulse):
+    """Draw a pulsing aura effect around a fighter rectangle."""
     radius = 22 + (pulse % 16)
     center = (rect.centerx - 18 if facing_right else rect.centerx + 18, rect.y + 34)
     pygame.draw.circle(screen, color, center, radius, 2)
@@ -228,6 +241,7 @@ def draw_aura(rect, color, facing_right, pulse):
 
 
 def load_sprite_image(path):
+    """Load and cache a sprite image, trimming empty transparent space."""
     if path in sprite_cache:
         return sprite_cache[path]
     try:
@@ -244,6 +258,7 @@ def load_sprite_image(path):
 
 
 def sprite_animation_name(p):
+    """Choose which sprite animation matches the fighter's current state."""
     if p["hp"] <= 0:
         return "ko"
     if p["hit_stun"] > 0 or p["hit_cooldown"] > 0:
@@ -260,6 +275,7 @@ def sprite_animation_name(p):
 
 
 def draw_character_sprite(p, rect, facing_right):
+    """Draw an animated sprite for a fighter and return True if it worked."""
     sprite_data = SPRITE_ANIMATIONS.get(p.get("character_key"))
     if not sprite_data:
         return False
@@ -300,6 +316,7 @@ def draw_character_sprite(p, rect, facing_right):
 
 
 def draw_fighter_from_state(p):
+    """Draw one fighter using the server/client state dictionary."""
     char = CHARACTERS[p.get("character_key", "joseph")]
     rect = pygame.Rect(p["x"], p["y"], 80, 160)
     facing_right = p["facing_right"]
@@ -386,6 +403,7 @@ def draw_fighter_from_state(p):
 
 
 def draw_match(state, player_id):
+    """Draw the full fight screen from the latest authoritative match state."""
     draw_stage()
     p1 = state["players"]["0"]
     p2 = state["players"]["1"]
@@ -420,6 +438,7 @@ def draw_match(state, player_id):
 
 
 def load_sweetie_image():
+    """Load and cache the optional secret popup image if the file exists."""
     global sweetie_image
     if sweetie_image is not None:
         return sweetie_image
@@ -433,6 +452,7 @@ def load_sweetie_image():
 
 
 def handle_secret_image_toggle():
+    """Toggle the secret popup when the player presses C and P together."""
     global sweetie_popup_open, prev_c_and_p
     keys = pygame.key.get_pressed()
     c_and_p = keys[pygame.K_c] and keys[pygame.K_p]
@@ -442,6 +462,7 @@ def handle_secret_image_toggle():
 
 
 def play_music(source, volume=0.5):
+    """Load and loop a music file or URL through Pygame's mixer."""
     global current_music_file, music_error_printed
     try:
         if not pygame.mixer.get_init():
@@ -476,14 +497,17 @@ def play_music(source, volume=0.5):
 
 
 def play_menu_music():
+    """Start the normal menu music loop."""
     play_music(MUSIC_SOURCE, 0.5)
 
 
 def play_character_select_music():
+    """Start the character-select music loop."""
     play_music(CHARACTER_SELECT_MUSIC_SOURCE, 0.55)
 
 
 def stop_menu_music():
+    """Stop any currently playing menu or character-select music."""
     global current_music_file
     try:
         if pygame.mixer.get_init() and pygame.mixer.music.get_busy():
@@ -495,6 +519,7 @@ def stop_menu_music():
 
 
 def get_music_file(source):
+    """Resolve a local music path or download a direct audio URL once."""
     global music_error_printed
     source = source.strip()
     parsed = urllib.parse.urlparse(source)
@@ -528,6 +553,7 @@ def get_music_file(source):
 
 
 def draw_gold_frame(rect, thickness=3):
+    """Draw the gold arcade-style border used around menu panels."""
     pygame.draw.rect(screen, BLACK, rect, border_radius=3)
     pygame.draw.rect(screen, (205, 150, 25), rect, thickness, border_radius=3)
     pygame.draw.rect(
@@ -561,6 +587,7 @@ def draw_gold_frame(rect, thickness=3):
 
 
 def draw_menu_background():
+    """Draw the animated-looking JoJo arcade background for menu screens."""
     screen.fill((5, 3, 9))
 
     for i in range(0, WIDTH, 34):
@@ -587,6 +614,7 @@ def draw_menu_background():
 
 
 def draw_menu_button(text, rect, selected):
+    """Draw one selectable main-menu or difficulty-menu button."""
     if selected:
         pygame.draw.rect(
             screen,
@@ -632,6 +660,7 @@ def draw_menu_button(text, rect, selected):
 
 
 def draw_video_panel(x, y, w, h, title="SWEETIE FOX", show_close=False):
+    """Draw the framed secret image panel with a fake video-player footer."""
     panel = pygame.Rect(x, y, w, h)
     draw_gold_frame(panel, 3)
     draw_text_in_rect(
@@ -674,6 +703,7 @@ def draw_video_panel(x, y, w, h, title="SWEETIE FOX", show_close=False):
 
 
 def draw_secret_image_popup():
+    """Draw the secret popup overlay when it is currently open."""
     if not sweetie_popup_open:
         return
 
@@ -681,6 +711,7 @@ def draw_secret_image_popup():
 
 
 def draw_showdown_preview(x, y, w, h):
+    """Draw the main-menu preview panel showing a mini fight scene."""
     panel = pygame.Rect(x, y, w, h)
     draw_gold_frame(panel, 3)
     draw_text_in_rect(
@@ -762,6 +793,7 @@ def draw_showdown_preview(x, y, w, h):
 
 
 def draw_lobby_side_panel(players=1, player_names=None):
+    """Draw the host lobby side panel with player count and generated names."""
     player_names = player_names or {"0": "PLAYER 1", "1": "PLAYER 2"}
     panel = pygame.Rect(960, 25, 295, 445)
     draw_gold_frame(panel, 3)
@@ -852,6 +884,7 @@ def draw_lobby_side_panel(players=1, player_names=None):
 
 
 def draw_character_card(character_key, rect, selected=False, locked=False):
+    """Draw one character-select card, including selected and locked states."""
     char = CHARACTERS[character_key]
     fill = (42, 16, 52) if selected else (18, 14, 28)
     if locked:
@@ -908,6 +941,7 @@ def draw_character_card(character_key, rect, selected=False, locked=False):
 
 
 def character_select_screen(title, unavailable=None):
+    """Let the player choose an available character and return its key."""
     play_character_select_music()
     unavailable = set(unavailable or [])
     available = [key for key in CHARACTER_ORDER if key not in unavailable]
@@ -950,6 +984,7 @@ def character_select_screen(title, unavailable=None):
 
 
 def difficulty_select_screen():
+    """Let the player choose the CPU difficulty for singleplayer mode."""
     play_menu_music()
     selected = 1
 
@@ -987,6 +1022,7 @@ def difficulty_select_screen():
 
 
 def message_screen(title, lines):
+    """Draw a simple message screen with a title and multiple lines."""
     handle_secret_image_toggle()
     screen.fill(DARK)
     draw_center(title, 160, True, YELLOW)
@@ -997,6 +1033,7 @@ def message_screen(title, lines):
 
 
 def text_input_screen(title, default_text=""):
+    """Collect a numeric IP address string from the player."""
     text = default_text
     while True:
         clock.tick(FPS)
@@ -1027,6 +1064,7 @@ def text_input_screen(title, default_text=""):
 
 
 def wait_for_enter():
+    """Pause the current screen until the player presses Enter."""
     while True:
         clock.tick(FPS)
         for event in pygame.event.get():
@@ -1038,6 +1076,7 @@ def wait_for_enter():
 
 
 def intro_screen():
+    """Play the short animated title intro before the main menu."""
     play_menu_music()
     timer = 120
     while timer > 0:
@@ -1069,6 +1108,7 @@ def intro_screen():
 
 
 def round_intro(p1_name="Joseph Joestar", p2_name="Wamuu"):
+    """Show the 3-2-1-FIGHT countdown before a match starts."""
     labels = ["3", "2", "1", "FIGHT!"]
     for label in labels:
         frames = 45 if label != "FIGHT!" else 60

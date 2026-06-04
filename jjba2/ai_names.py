@@ -1,3 +1,5 @@
+"""Generate JoJo-themed player names with local AI or a safe fallback."""
+
 import json
 import os
 import random
@@ -41,10 +43,12 @@ FALLBACK_NOUNS = (
 
 
 def _fallback_name():
+    """Build one dramatic JoJo-style name without calling the local AI server."""
     return f"{random.choice(FALLBACK_EPITHETS)} {random.choice(FALLBACK_NOUNS)}"
 
 
 def _fallback_player_names():
+    """Return two different fallback names for Player 1 and Player 2."""
     first = _fallback_name()
     second = _fallback_name()
     while second == first:
@@ -53,12 +57,14 @@ def _fallback_player_names():
 
 
 def _clean_name(name):
+    """Normalize one generated name so it is uppercase, short, and display-safe."""
     cleaned = "".join(ch for ch in name.upper() if ch.isalnum() or ch in " -'")
     cleaned = " ".join(cleaned.split())
     return cleaned[:24] or None
 
 
 def _parse_names(text):
+    """Extract two usable player names from the local AI response text."""
     text = text.strip()
     try:
         data = json.loads(text)
@@ -84,6 +90,7 @@ def _parse_names(text):
 
 
 def _ask_local_ai_for_names():
+    """Ask the Ollama-compatible local API to generate two JoJo-themed names."""
     prompt = (
         "Generate exactly two short JoJo-themed arcade fighting game display "
         "names for Player 1 and Player 2. Make them dramatic and inspired by "
@@ -116,6 +123,7 @@ def _ask_local_ai_for_names():
 
 
 def generate_ai_player_names():
+    """Return AI-generated player names, falling back locally if AI is unavailable."""
     try:
         names = _ask_local_ai_for_names()
         if names:

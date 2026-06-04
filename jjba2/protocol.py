@@ -1,3 +1,5 @@
+"""Handle the LAN socket protocol: length header plus pickled dictionaries."""
+
 import pickle
 import socket
 
@@ -27,12 +29,14 @@ def get_local_ip():
 
 
 def send_message(sock, data):
+    """Send one dictionary as length#pickle_payload over a TCP socket."""
     payload = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
     header = str(len(payload)).encode("ascii") + MESSAGE_LENGTH_SEPARATOR
     sock.sendall(header + payload)
 
 
 def tune_socket(sock):
+    """Try to reduce input delay by disabling Nagle's algorithm on the socket."""
     try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except Exception as exc:
@@ -40,6 +44,7 @@ def tune_socket(sock):
 
 
 def recv_exact(sock, byte_count):
+    """Read exactly byte_count bytes or raise an error if the socket closes."""
     data = b""
     while len(data) < byte_count:
         chunk = sock.recv(byte_count - len(data))
@@ -50,6 +55,7 @@ def recv_exact(sock, byte_count):
 
 
 def recv_message(sock):
+    """Receive one length-prefixed pickle message and return its dictionary."""
     header = b""
     while MESSAGE_LENGTH_SEPARATOR not in header:
         chunk = sock.recv(1)
