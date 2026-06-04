@@ -189,11 +189,12 @@ def run_singleplayer_game():
         ai_key,
         difficulty_key,
     )
+    message_screen("PREPARING MATCH", ["Generating fighter names..."])
+    player_names = generate_ai_player_names()
     stop_menu_music()
     round_intro(CHARACTERS[player_key]["name"], CHARACTERS[ai_key]["name"])
     player = Fighter(200, 300, player_key, True)
     ai = Fighter(900, 300, ai_key, False)
-    player_names = generate_ai_player_names()
     winner = None
     frame_count = 0
 
