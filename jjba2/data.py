@@ -58,21 +58,7 @@ CHARACTERS = {
 }
 CHARACTER_ORDER = ("joseph", "caesar", "lisa", "wamuu", "kars", "stroheim")
 
-SPRITE_ANIMATIONS = {
-    "joseph": {
-        "folder": "joseph8",
-        "idle": 4,
-        "walk": 4,
-        "jump": 1,
-        "block": 2,
-        "light": 3,
-        "medium": 3,
-        "heavy": 3,
-        "hit": 2,
-        "ko": 3,
-        "height": 152,
-    }
-}
+SPRITE_ANIMATIONS = {}
 sprite_cache = {}
 
 DIFFICULTIES = {
