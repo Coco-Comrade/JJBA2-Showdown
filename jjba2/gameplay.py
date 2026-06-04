@@ -17,6 +17,7 @@ from .render import (
     draw_match,
     message_screen,
     round_intro,
+    stop_menu_music,
     wait_for_enter,
 )
 
@@ -283,4 +284,6 @@ def run_client_game(client):
 
         if time.time() - last_state_time > 3:
             draw_center("Network delay...", 610, False, YELLOW)
+
+        pygame.display.flip()
 
