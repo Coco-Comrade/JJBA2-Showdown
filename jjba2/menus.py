@@ -103,7 +103,7 @@ def create_lobby_flow():
     host_character = character_select_screen("PLAYER 1 SELECT")
     if not host_character:
         return
-    lan_password = password_input_screen("CREATE LAN PASSWORD")
+    lan_password = password_input_screen("CREATE LAN PASSWORD", show_password=True)
     if not lan_password:
         return
     play_menu_music()
@@ -161,13 +161,13 @@ def create_lobby_flow():
         handle_secret_image_toggle()
         draw_menu_background()
         draw_center("LOBBY CREATED", 130, True, YELLOW)
-        draw_center("Have Player 2 join using this IP:", 250)
-        draw_center(local_ip, 310, True, WHITE)
-        draw_center("Encrypted UDP lobby", 365, False, CYAN)
+        draw_center("Have Player 2 join using this IP:", 238)
+        draw_center(local_ip, 298, True, WHITE)
+        draw_center("Encrypted UDP lobby", 390, False, CYAN)
         status = "Ready to fight" if server.characters_ready() else "Waiting for Player 2 choice"
-        draw_center(f"Players Connected: {server.player_count()} / 2", 420)
-        draw_center(status, 465, False, CYAN)
-        draw_center("Esc = cancel lobby", 540, False, GRAY)
+        draw_center(f"Players Connected: {server.player_count()} / 2", 445)
+        draw_center(status, 492, False, CYAN)
+        draw_center("Esc = cancel lobby", 585, False, GRAY)
         draw_lobby_side_panel(server.player_count(), player_names)
         draw_secret_image_popup()
         pygame.display.flip()

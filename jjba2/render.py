@@ -1063,7 +1063,7 @@ def text_input_screen(title, default_text=""):
                         text += ch
 
 
-def password_input_screen(title):
+def password_input_screen(title, show_password=False):
     """Collect the shared LAN password used for encrypted UDP packets."""
     text = ""
     while True:
@@ -1072,7 +1072,8 @@ def password_input_screen(title):
         draw_menu_background()
         draw_center(title, 150, True, YELLOW)
         draw_center("Both players must enter the same LAN password", 245)
-        draw_center(("*" * len(text) or "_") + "_", 325)
+        display_text = text if show_password else "*" * len(text)
+        draw_center((display_text or "_") + "_", 325)
         draw_center("Enter = continue    Backspace = delete    Esc = cancel", 500)
         draw_secret_image_popup()
         pygame.display.flip()
