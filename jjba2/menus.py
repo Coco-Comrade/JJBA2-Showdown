@@ -103,6 +103,9 @@ def create_lobby_flow():
     host_character = character_select_screen("PLAYER 1 SELECT")
     if not host_character:
         return
+    lan_password = password_input_screen("CREATE LAN PASSWORD")
+    if not lan_password:
+        return
     play_menu_music()
     message_screen("CREATING LOBBY", ["Generating player names..."])
     player_names = generate_ai_player_names()
@@ -113,7 +116,7 @@ def create_lobby_flow():
         player_names.get("1", "PLAYER 2"),
     )
 
-    server = LobbyServer(host_character, player_names)
+    server = LobbyServer(host_character, player_names, lan_password)
     try:
         server.start()
     except Exception as exc:
@@ -133,7 +136,7 @@ def create_lobby_flow():
     client = GameClient()
 
     try:
-        client.connect("127.0.0.1")
+        client.connect("127.0.0.1", lan_password)
     except Exception as exc:
         logger.exception("Host client could not connect to local server")
         server.stop()
@@ -160,6 +163,7 @@ def create_lobby_flow():
         draw_center("LOBBY CREATED", 130, True, YELLOW)
         draw_center("Have Player 2 join using this IP:", 250)
         draw_center(local_ip, 310, True, WHITE)
+        draw_center("Encrypted UDP lobby", 365, False, CYAN)
         status = "Ready to fight" if server.characters_ready() else "Waiting for Player 2 choice"
         draw_center(f"Players Connected: {server.player_count()} / 2", 420)
         draw_center(status, 465, False, CYAN)
@@ -193,11 +197,14 @@ def join_lobby_flow():
     host_ip = text_input_screen("JOIN LOBBY")
     if not host_ip:
         return
+    lan_password = password_input_screen("ENTER LAN PASSWORD")
+    if not lan_password:
+        return
 
     client = GameClient()
     try:
         message_screen("CONNECTING", [f"Trying {host_ip}:{PORT}..."])
-        client.connect(host_ip)
+        client.connect(host_ip, lan_password)
     except Exception as exc:
         logger.exception("Could not join lobby at %s", host_ip)
         message_screen(

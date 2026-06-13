@@ -1,137 +1,169 @@
-"""Host-side LAN lobby and authoritative match server code."""
+"""Host-side UDP lobby and authoritative match server code."""
 
 import socket
 import threading
+import time
 
 from .config import *
 from .data import *
 from .input_state import empty_input, normalize_input
-from .protocol import recv_message, send_message, tune_socket
+from .protocol import derive_lan_key, recv_message, send_message
+
 
 class LobbyServer:
-    """Accept two clients, store their inputs, and broadcast server state."""
+    """Track two UDP clients, store their inputs, and broadcast server state."""
 
-    def __init__(self, host_character="joseph", player_names=None):
-        """Create a lobby server with the host character already selected."""
+    def __init__(self, host_character="joseph", player_names=None, password=""):
+        """Create a UDP lobby server with the host character already selected."""
         self.host = "0.0.0.0"
         self.port = PORT
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.clients = {}
+        self.addr_to_player = {}
+        self.last_seen = {}
         self.inputs = {0: empty_input(), 1: empty_input()}
         self.selections = {0: host_character, 1: None}
         self.player_names = player_names or {"0": "PLAYER 1", "1": "PLAYER 2"}
+        self.crypto_key = derive_lan_key(password)
         self.lock = threading.Lock()
         self.running = True
         self.started = False
         self.thread = None
 
     def start(self):
-        """Bind the TCP socket, listen for players, and start accepting clients."""
+        """Bind the UDP socket and start receiving lobby/game datagrams."""
         self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(2)
         self.thread = threading.Thread(target=self.accept_loop, daemon=True)
         self.thread.start()
-        logger.info("Lobby server started on %s:%s", self.host, self.port)
+        logger.info("UDP lobby server started on %s:%s", self.host, self.port)
 
     def accept_loop(self):
-        """Accept incoming clients and assign them Player 1 or Player 2."""
+        """Receive UDP packets, assign players, and process player messages."""
         while self.running:
             try:
-                conn, addr = self.server_socket.accept()
-                tune_socket(conn)
-                logger.info("Incoming lobby connection from %s:%s", *addr)
-
-                with self.lock:
-                    if len(self.clients) >= 2:
-                        try:
-                            send_message(conn, {"type": "full"})
-                        except Exception as exc:
-                            logger.debug("Could not send lobby-full message: %s", exc)
-                        conn.close()
-                        logger.info("Rejected connection because lobby is full")
-                        continue
-
-                    player_id = 0 if 0 not in self.clients else 1
-                    self.clients[player_id] = conn
-                    self.started = len(self.clients) == 2
-                    logger.info("Assigned client to player %s", player_id + 1)
-
-                try:
-                    send_message(
-                        conn,
-                        {
-                            "type": "welcome",
-                            "player_id": player_id,
-                            "selections": self.selections,
-                            "player_names": self.player_names,
-                        },
-                    )
-                except Exception as exc:
-                    logger.info("Could not welcome player %s: %s", player_id + 1, exc)
-                    with self.lock:
-                        if player_id in self.clients:
-                            del self.clients[player_id]
-                        self.inputs[player_id] = empty_input()
-                        self.selections[player_id] = None
-                        self.started = False
-                    conn.close()
+                data, addr = recv_message(self.server_socket, self.crypto_key)
+                self.cleanup_stale_clients()
+                if addr not in self.addr_to_player:
+                    self.register_client(addr, data)
                     continue
 
-                thread = threading.Thread(
-                    target=self.client_loop,
-                    args=(conn, player_id),
-                    daemon=True,
-                )
-                thread.start()
-
+                player_id = self.addr_to_player[addr]
+                with self.lock:
+                    self.last_seen[player_id] = time.time()
+                self.handle_client_message(player_id, data)
             except Exception as exc:
                 if self.running:
-                    logger.exception("Server accept loop stopped unexpectedly: %s", exc)
-                break
+                    logger.info("Ignored bad UDP packet: %s", exc)
 
-    def client_loop(self, conn, player_id):
-        """Receive one player's select/input messages until they disconnect."""
-        while self.running:
-            try:
-                data = recv_message(conn)
-                if data.get("type") == "input":
-                    with self.lock:
-                        self.inputs[player_id] = normalize_input(data.get("input"))
-                elif data.get("type") == "select":
-                    character_key = data.get("character")
-                    with self.lock:
-                        taken = [
-                            value
-                            for pid, value in self.selections.items()
-                            if pid != player_id
-                        ]
-                        if character_key in CHARACTERS and character_key not in taken:
-                            self.selections[player_id] = character_key
-                            logger.info(
-                                "Player %s selected %s",
-                                player_id + 1,
-                                character_key,
-                            )
-                        else:
-                            logger.warning(
-                                "Rejected character selection from player %s: %s",
-                                player_id + 1,
-                                character_key,
-                            )
-            except Exception as exc:
-                logger.info("Player %s disconnected: %s", player_id + 1, exc)
-                with self.lock:
-                    if player_id in self.clients:
-                        del self.clients[player_id]
-                    self.inputs[player_id] = empty_input()
-                    self.selections[player_id] = None
-                    self.started = False
-                try:
-                    conn.close()
-                except Exception as close_exc:
-                    logger.debug("Client socket close failed: %s", close_exc)
-                break
+    def register_client(self, addr, data):
+        """Assign a new UDP address to an open player slot after a join packet."""
+        if data.get("type") != "join":
+            logger.warning("Ignoring first packet without join from %s:%s", *addr)
+            return
+
+        with self.lock:
+            if len(self.clients) >= 2:
+                is_full = True
+                player_id = None
+                selections = {}
+                player_names = {}
+            else:
+                is_full = False
+                player_id = 0 if 0 not in self.clients else 1
+                self.clients[player_id] = addr
+                self.addr_to_player[addr] = player_id
+                self.last_seen[player_id] = time.time()
+                self.started = len(self.clients) == 2
+                selections = dict(self.selections)
+                player_names = dict(self.player_names)
+
+        if is_full:
+            send_message(self.server_socket, {"type": "full"}, addr, self.crypto_key)
+            logger.info("Rejected UDP join from %s:%s because lobby is full", *addr)
+            return
+
+        send_message(
+            self.server_socket,
+            {
+                "type": "welcome",
+                "player_id": player_id,
+                "selections": selections,
+                "player_names": player_names,
+            },
+            addr,
+            self.crypto_key,
+        )
+        logger.info("Assigned UDP client %s:%s to player %s", *addr, player_id + 1)
+
+    def handle_client_message(self, player_id, data):
+        """Apply one validated UDP message from an already registered client."""
+        if data.get("type") == "join":
+            with self.lock:
+                addr = self.clients.get(player_id)
+                selections = dict(self.selections)
+                player_names = dict(self.player_names)
+            if addr:
+                send_message(
+                    self.server_socket,
+                    {
+                        "type": "welcome",
+                        "player_id": player_id,
+                        "selections": selections,
+                        "player_names": player_names,
+                    },
+                    addr,
+                    self.crypto_key,
+                )
+            return
+
+        if data.get("type") == "input":
+            with self.lock:
+                self.inputs[player_id] = normalize_input(data.get("input"))
+        elif data.get("type") == "select":
+            character_key = data.get("character")
+            with self.lock:
+                taken = [
+                    value
+                    for pid, value in self.selections.items()
+                    if pid != player_id
+                ]
+                if character_key in CHARACTERS and character_key not in taken:
+                    self.selections[player_id] = character_key
+                    logger.info(
+                        "Player %s selected %s",
+                        player_id + 1,
+                        character_key,
+                    )
+                else:
+                    logger.warning(
+                        "Rejected character selection from player %s: %s",
+                        player_id + 1,
+                        character_key,
+                    )
+
+    def cleanup_stale_clients(self):
+        """Remove UDP clients that stopped sending packets for too long."""
+        now = time.time()
+        stale = []
+        with self.lock:
+            for player_id, seen_at in list(self.last_seen.items()):
+                if now - seen_at > UDP_CLIENT_TIMEOUT:
+                    stale.append(player_id)
+            for player_id in stale:
+                self.drop_player_locked(player_id)
+        for player_id in stale:
+            logger.info("Player %s timed out", player_id + 1)
+
+    def drop_player_locked(self, player_id):
+        """Remove one player while the server lock is already held."""
+        addr = self.clients.pop(player_id, None)
+        if addr in self.addr_to_player:
+            del self.addr_to_player[addr]
+        self.last_seen.pop(player_id, None)
+        self.inputs[player_id] = empty_input()
+        self.selections[player_id] = None
+        self.started = False
 
     def get_inputs(self):
         """Return a thread-safe copy of the latest input for both players."""
@@ -139,33 +171,33 @@ class LobbyServer:
             return {pid: dict(inp) for pid, inp in self.inputs.items()}
 
     def broadcast_state(self, state):
-        """Send the official match state to every connected client."""
+        """Send the official match state to every connected UDP client."""
+        self.cleanup_stale_clients()
         with self.lock:
             client_items = list(self.clients.items())
 
         dead = []
-        for pid, conn in client_items:
+        for pid, addr in client_items:
             try:
-                send_message(conn, {"type": "state", "state": state})
+                send_message(
+                    self.server_socket,
+                    {"type": "state", "state": state},
+                    addr,
+                    self.crypto_key,
+                )
             except Exception as exc:
                 logger.info("Dropping player %s after send failure: %s", pid + 1, exc)
-                dead.append((pid, conn))
+                dead.append(pid)
 
         if dead:
             with self.lock:
-                for pid, conn in dead:
-                    if pid in self.clients:
-                        del self.clients[pid]
-                    self.inputs[pid] = empty_input()
-                    self.selections[pid] = None
-                    try:
-                        conn.close()
-                    except Exception as close_exc:
-                        logger.debug("Client socket close failed: %s", close_exc)
+                for pid in dead:
+                    self.drop_player_locked(pid)
                 self.started = len(self.clients) == 2
 
     def player_count(self):
         """Return how many clients are currently connected to the lobby."""
+        self.cleanup_stale_clients()
         with self.lock:
             return len(self.clients)
 
@@ -189,17 +221,14 @@ class LobbyServer:
             return dict(self.player_names)
 
     def stop(self):
-        """Stop the server socket and close all active client connections."""
+        """Stop the UDP server socket and forget all active clients."""
         self.running = False
-        logger.info("Stopping lobby server")
+        logger.info("Stopping UDP lobby server")
         try:
             self.server_socket.close()
         except Exception as exc:
             logger.debug("Server socket close failed: %s", exc)
         with self.lock:
-            for conn in self.clients.values():
-                try:
-                    conn.close()
-                except Exception as exc:
-                    logger.debug("Client socket close failed: %s", exc)
             self.clients.clear()
+            self.addr_to_player.clear()
+            self.last_seen.clear()

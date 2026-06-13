@@ -1063,6 +1063,37 @@ def text_input_screen(title, default_text=""):
                         text += ch
 
 
+def password_input_screen(title):
+    """Collect the shared LAN password used for encrypted UDP packets."""
+    text = ""
+    while True:
+        clock.tick(FPS)
+        handle_secret_image_toggle()
+        draw_menu_background()
+        draw_center(title, 150, True, YELLOW)
+        draw_center("Both players must enter the same LAN password", 245)
+        draw_center(("*" * len(text) or "_") + "_", 325)
+        draw_center("Enter = continue    Backspace = delete    Esc = cancel", 500)
+        draw_secret_image_popup()
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                quit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN and text.strip():
+                    return text.strip()
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                if event.key == pygame.K_BACKSPACE:
+                    text = text[:-1]
+                else:
+                    ch = event.unicode
+                    if ch and ch.isprintable() and len(text) < 32:
+                        text += ch
+
+
 def wait_for_enter():
     """Pause the current screen until the player presses Enter."""
     while True:

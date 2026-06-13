@@ -10,7 +10,7 @@ JJBA2: The Showdown is a Python/Pygame arcade fighting game. It supports:
 - Two-player LAN matches with a host lobby.
 - A server-authoritative network model where clients send input and the host
   server sends back the official match state.
-- Length-prefixed TCP messages for reliable pickle dictionary framing.
+- Encrypted raw UDP messages for pickle dictionary game packets.
 - Local AI-generated JoJo-themed player display names through an
   Ollama-compatible local API.
 
@@ -43,7 +43,7 @@ run_game.bat
 - `jjba2/config.py` initializes Pygame, logging, screen, fonts, and constants.
 - `jjba2/data.py` contains characters, attacks, difficulties, and sprite metadata.
 - `jjba2/ai_names.py` generates JoJo-themed player names with a local AI model.
-- `jjba2/protocol.py` contains LAN message framing and socket helpers.
+- `jjba2/protocol.py` contains encrypted UDP packet helpers.
 - `jjba2/server.py` contains the lobby/game server.
 - `jjba2/client.py` contains the LAN client.
 - `jjba2/fighter.py` contains fighter movement, attack, damage, and state logic.
@@ -53,23 +53,31 @@ run_game.bat
 
 ## LAN Protocol
 
-LAN messages are Python dictionaries serialized with `pickle`. Each message is
-sent over TCP as ASCII payload length, then `#`, then the exact pickle payload:
+LAN messages are still Python dictionaries serialized with `pickle`, but they
+are now sent as raw UDP datagrams instead of TCP streams. UDP already preserves
+packet boundaries, so the protocol no longer needs the old `length#` header.
+
+Each UDP packet contains:
 
 ```text
-length#pickled_dictionary
+magic_header + nonce + hmac_tag + encrypted_pickle_payload
 ```
 
-For example, the logical message still looks like:
+For example, the decrypted logical message still looks like:
 
 ```python
 {"type": "input", "input": {...}}
 ```
 
-The receiver reads digits until `#`, converts that length to an integer, then
-reads exactly that many bytes and unpickles the dictionary. Clients send
-character selections and input snapshots; the host server sends lobby responses
-and authoritative match state snapshots.
+The host and joining player must type the same LAN password. The game derives a
+key from that password, encrypts the pickled dictionary, and verifies an HMAC
+tag before unpickling. Clients send `join`, character selections, and input
+snapshots; the host server sends lobby responses and authoritative match state
+snapshots.
+
+Because the game uses UDP, firewalls must allow UDP port `5555` on the host PC.
+If the passwords do not match, the packet authentication fails and the lobby
+will not accept the message.
 
 ## AI Player Names
 

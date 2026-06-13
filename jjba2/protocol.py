@@ -1,9 +1,19 @@
-"""Handle the LAN socket protocol: length header plus pickled dictionaries."""
+"""Handle the encrypted raw UDP LAN protocol for dictionary messages."""
 
+import hashlib
+import hmac
 import pickle
+import secrets
 import socket
 
 from .config import *
+
+PROTOCOL_MAGIC = b"JJBA2UDP1"
+NONCE_BYTES = 16
+TAG_BYTES = 32
+KEY_SALT = b"jjba2-showdown-lan-v1"
+KEY_ROUNDS = 100_000
+
 
 def get_local_ip():
     """Return the best LAN IP to show other players."""
@@ -28,57 +38,90 @@ def get_local_ip():
             s.close()
 
 
-def send_message(sock, data):
-    """Send one dictionary as length#pickle_payload over a TCP socket."""
+def derive_lan_key(password):
+    """Turn the lobby password into a fixed-size encryption/authentication key."""
+    if not isinstance(password, str) or not password.strip():
+        raise ValueError("A LAN password is required")
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        password.strip().encode("utf-8"),
+        KEY_SALT,
+        KEY_ROUNDS,
+        dklen=32,
+    )
+
+
+def make_keystream(key, nonce, byte_count):
+    """Build a SHA-256 byte stream used to hide the pickle payload."""
+    output = bytearray()
+    counter = 0
+    while len(output) < byte_count:
+        output.extend(
+            hashlib.sha256(
+                key + b"stream" + nonce + counter.to_bytes(4, "big")
+            ).digest()
+        )
+        counter += 1
+    return bytes(output[:byte_count])
+
+
+def xor_bytes(left, right):
+    """XOR two byte strings of equal length."""
+    return bytes(a ^ b for a, b in zip(left, right))
+
+
+def pack_message(data, key):
+    """Serialize, encrypt, and authenticate one protocol dictionary."""
     if not isinstance(data, dict):
         raise TypeError("Protocol messages must be dictionaries")
+
     payload = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
-    header = str(len(payload)).encode("ascii") + MESSAGE_LENGTH_SEPARATOR
-    sock.sendall(header + payload)
+    if len(payload) > MAX_MESSAGE_BYTES:
+        raise ConnectionError(f"Message too large: {len(payload)} bytes")
+
+    nonce = secrets.token_bytes(NONCE_BYTES)
+    ciphertext = xor_bytes(payload, make_keystream(key, nonce, len(payload)))
+    tag = hmac.new(key, PROTOCOL_MAGIC + nonce + ciphertext, hashlib.sha256).digest()
+    return PROTOCOL_MAGIC + nonce + tag + ciphertext
 
 
-def tune_socket(sock):
-    """Try to reduce input delay by disabling Nagle's algorithm on the socket."""
-    try:
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    except Exception as exc:
-        logger.debug("Could not set TCP_NODELAY: %s", exc)
+def unpack_message(packet, key):
+    """Verify, decrypt, and unpickle one UDP packet into a dictionary."""
+    min_size = len(PROTOCOL_MAGIC) + NONCE_BYTES + TAG_BYTES + 1
+    if len(packet) < min_size:
+        raise ConnectionError("UDP packet is too short")
+    if len(packet) > MAX_MESSAGE_BYTES + min_size:
+        raise ConnectionError(f"UDP packet is too large: {len(packet)} bytes")
+    if not packet.startswith(PROTOCOL_MAGIC):
+        raise ConnectionError("Bad UDP protocol header")
 
+    offset = len(PROTOCOL_MAGIC)
+    nonce = packet[offset:offset + NONCE_BYTES]
+    offset += NONCE_BYTES
+    tag = packet[offset:offset + TAG_BYTES]
+    ciphertext = packet[offset + TAG_BYTES:]
 
-def recv_exact(sock, byte_count):
-    """Read exactly byte_count bytes or raise an error if the socket closes."""
-    data = b""
-    while len(data) < byte_count:
-        chunk = sock.recv(byte_count - len(data))
-        if not chunk:
-            raise ConnectionError("Disconnected")
-        data += chunk
-    return data
+    expected = hmac.new(
+        key,
+        PROTOCOL_MAGIC + nonce + ciphertext,
+        hashlib.sha256,
+    ).digest()
+    if not hmac.compare_digest(tag, expected):
+        raise ConnectionError("Bad LAN password or corrupted UDP packet")
 
-
-def recv_message(sock):
-    """Receive one length-prefixed pickle message and return its dictionary."""
-    header = b""
-    while MESSAGE_LENGTH_SEPARATOR not in header:
-        chunk = sock.recv(1)
-        if not chunk:
-            raise ConnectionError("Disconnected")
-        header += chunk
-        if len(header) > 12:
-            raise ConnectionError("Message length header is too long")
-
-    length_text = header[:-len(MESSAGE_LENGTH_SEPARATOR)].decode("ascii")
-    if not length_text.isdigit():
-        raise ConnectionError(f"Bad message length header: {length_text!r}")
-
-    message_length = int(length_text)
-    if message_length <= 0:
-        raise ConnectionError(f"Bad message length: {message_length}")
-    if message_length > MAX_MESSAGE_BYTES:
-        raise ConnectionError(f"Message too large: {message_length} bytes")
-
-    payload = recv_exact(sock, message_length)
+    payload = xor_bytes(ciphertext, make_keystream(key, nonce, len(ciphertext)))
     message = pickle.loads(payload)
     if not isinstance(message, dict):
         raise ConnectionError("Protocol message must be a dictionary")
     return message
+
+
+def send_message(sock, data, addr, key):
+    """Send one encrypted dictionary as a raw UDP datagram."""
+    sock.sendto(pack_message(data, key), addr)
+
+
+def recv_message(sock, key):
+    """Receive one encrypted UDP datagram and return its dictionary plus address."""
+    packet, addr = sock.recvfrom(MAX_MESSAGE_BYTES + 128)
+    return unpack_message(packet, key), addr
